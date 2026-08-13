@@ -1,0 +1,9 @@
+# HF Spaces 배포용 최소 의존성 (파일명 requirements.txt 고정 — HF Spaces 자동 인식용)
+# 로컬 개발/학습 전체 의존성은 requirements-main.txt(env-main) 참고, 여긴 런타임 추론만
+
+streamlit==1.61.1
+sentence-transformers==5.6.1
+faster-whisper==1.2.1
+supabase==2.31.0
+
+# Qwen3-TTS 추론 의존성 버전 미정 — docs/decisions.md 참고

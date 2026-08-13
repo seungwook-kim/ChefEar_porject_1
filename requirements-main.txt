@@ -1,0 +1,15 @@
+# ChefEar env-main — 가이드 6.2 고정 버전표 기준 (임의로 바꾸지 말 것)
+# python3.12 -m venv env-main && source env-main/bin/activate
+# pip install -r requirements-main.txt --break-system-packages
+
+streamlit==1.61.1
+sentence-transformers==5.6.1
+faster-whisper==1.2.1
+jiwer==4.0.0
+supabase==2.31.0
+
+# STT 학습: transformers / peft / accelerate / bitsandbytes — 버전 재검증 필요(착수 후), docs/decisions.md 참고
+# TTS 학습: Qwen3-TTS 커뮤니티 LoRA 저장소 — 버전 미정, 비공식 실험적 저장소
+# TTS 추론: Qwen3-TTS 공식 저장소 기반 — 버전 미정
+
+# 제외(사용 금지): groq, piper-tts
