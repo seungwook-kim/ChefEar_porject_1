@@ -1,0 +1,15 @@
+# ChefEar STT - 확인된 핵심 버전
+
+torch==2.5.1+cu124
+transformers==4.46.3
+peft==0.20.0
+bitsandbytes==0.50.0
+
+# 사용 패키지
+
+accelerate
+librosa
+pandas
+jiwer
+tqdm
+huggingface_hub
