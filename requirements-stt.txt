@@ -1,5 +1,6 @@
 # ChefEar STT - 확인된 핵심 버전
 
+Python: 3.11.9
 torch==2.5.1+cu124
 transformers==4.46.3
 peft==0.20.0
@@ -7,9 +8,10 @@ bitsandbytes==0.50.0
 
 # 사용 패키지
 
-accelerate
-librosa
-pandas
-jiwer
-tqdm
-huggingface_hub
+accelerate==1.14.0
+librosa==0.11.0
+pandas==3.0.5
+jiwer==4.0.0
+tqdm==4.70.0
+huggingface_hub==0.36.2
+soundfile==0.14.0

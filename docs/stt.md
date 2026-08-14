@@ -15,13 +15,12 @@
 | transformers | 4.46.3 | Whisper 모델 및 Processor |
 | peft | 0.20.0 | LoRA / QLoRA Adapter |
 | bitsandbytes | 0.50.0 | 4-bit NF4 양자화 |
-| accelerate | - | GPU / Device 관리 |
-| librosa | - | 음성 파일 로드 및 전처리 |
-| pandas | - | CSV 데이터 처리 |
-| jiwer | - | WER / CER 계산 |
-| tqdm | - | 학습 / 추론 진행률 |
-| numpy | - | 수치 연산 |
-| soundfile | - | 음성 파일 처리 |
+| accelerate | 1.14.0 | GPU / Device 관리 |
+| librosa | 0.11.0 | 음성 파일 로드 및 전처리 |
+| pandas | 3.0.5 | CSV 데이터 처리 |
+| jiwer | 4.0.0 | WER / CER 계산 |
+| tqdm | 4.70.0 | 학습 / 추론 진행률 |
+| soundfile | 0.14.0| 음성 파일 처리 |
 
 ## 주요 QLoRA 설정
 
