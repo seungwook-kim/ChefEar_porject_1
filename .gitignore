@@ -13,11 +13,16 @@ venv/
 env-main/
 *.egg-info/
 .ipynb_checkpoints/
+.pytest_cache/
 
 # 대용량 음성/모델 — git 커밋 금지(용량), 별도 공유 방식 필요
 data/kss/
 data/synthesized/
 models/
+
+# 대용량 원본 CSV(수십MB) — git 커밋 금지, load_data.py --csv 로 외부 경로 직접 참조
+data/standard/*.csv
+data/kadx_raw/*.csv
 
 # Node
 node_modules/
@@ -33,4 +38,3 @@ build/
 
 # 로그
 *.log
-.gitignore
