@@ -62,11 +62,11 @@ def parse_first_reg_dt(raw: str) -> str:
     m = FIRST_REG_DT_RE.match(raw.strip())
     if not m:
         return datetime.utcnow().isoformat()
-    try:
-        return datetime.strptime(m.group(1), "%Y%m%d%H%M%S").isoformat()
-    except ValueError:
-        # 자릿수는 맞지만(정규식 통과) 3월 0일처럼 실제로는 없는 날짜인 경우.
-        return datetime.utcnow().isoformat()
+      
+try:
+    return datetime.strptime(m.group(1), "%Y%m%d%H%M%S").isoformat()
+except ValueError:
+    return datetime.utcnow().isoformat()
 
 
 def parse_steps(raw: str) -> list[str]:
