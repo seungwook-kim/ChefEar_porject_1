@@ -8,8 +8,14 @@ substitution.py 맨 위 설명에 있는 "세션이 뭔지" 부분과 같은 개
 from __future__ import annotations
 
 from orchestration.db import get_client
+from orchestration.intent_classifier import classify_intent
+from orchestration.recipe_search import search_variant_recipe, select_standard_recipe
+from orchestration.registration import register_recipe
+from orchestration.substitution import apply_substitution, cancel_substitution
 
 NOT_AVAILABLE_MESSAGE = "죄송해요, 이 레시피는 아직 등록되어 있지 않아요."
+DISH_NOT_FOUND_MESSAGE = "죄송해요, 그 요리는 아직 없어요."
+NO_ACTIVE_CORRECTION_MESSAGE = "지금은 정정할 내용이 없어요."
 
 
 def get_precomputed_steps(recipe_id: str, client=None) -> dict:
@@ -105,3 +111,84 @@ def manual_fallback(session: dict, button: str, client=None) -> dict:
     if button not in ("이전", "다시", "다음"):
         raise ValueError(f"알 수 없는 버튼: {button}")
     return advance_step(session, button, client=client)
+
+
+_DIRECTION_BY_INTENT = {"진행": "다음", "재청취": "다시", "이전": "이전"}
+
+
+def handle_utterance(
+    session: dict,
+    utterance: str,
+    *,
+    dish_name: str | None = None,
+    requested_ingredient: list[str] | None = None,
+    excluded_ingredient: str | None = None,
+    registration_step: str | None = None,
+    registration_value=None,
+    client=None,
+) -> dict:
+    """STT 결과 텍스트 하나를 받아 의도별로 라우팅하는 최종 조립 함수(7.1 진입점).
+
+    app.py가 직접 호출할 곳은 여기 하나뿐이다: STT 텍스트를 넣으면
+    classify_intent()로 의도를 가리고, 의도에 맞는 기존 함수(advance_step/
+    search_variant_recipe/select_standard_recipe/register_recipe/
+    cancel_substitution)로 라우팅해서 TTS에 넘길 응답을 만들어 돌려준다.
+
+    classify_intent()는 "무슨 의도인지"만 분류하고 "무슨 요리/재료인지" 같은
+    세부 정보(entity)는 추출하지 않는다 — 이 프로젝트에 발화 텍스트에서 요리명·
+    재료명을 뽑아내는 자연어 처리 로직이 따로 없기 때문이다. 그래서 그런 세부
+    정보가 필요한 의도(조회/재료대체/등록/정정)는 dish_name/requested_ingredient/
+    excluded_ingredient/registration_step/registration_value 같은 키워드 인자로
+    호출부가 직접 넘겨줘야 한다 — app.py가 UI 입력이나 별도 로직으로 채워서
+    호출하는 구조다.
+    """
+    client = client or get_client()
+    context_recipe_id = session.get("current_recipe_id")
+    result = classify_intent(utterance, context_recipe_id=context_recipe_id)
+    intent = result["intent"]
+
+    if intent == "미분류":
+        return {"intent": intent, "message": result["fallback_message"]}
+
+    if intent in _DIRECTION_BY_INTENT:
+        step_result = advance_step(session, _DIRECTION_BY_INTENT[intent], client=client)
+        return {"intent": intent, **step_result}
+
+    if intent == "취소":
+        return {"intent": intent, **cancel_substitution(session, client=client)}
+
+    if intent == "재료대체":
+        match = search_variant_recipe(
+            context_recipe_id, requested_ingredient or [], excluded_ingredient, client=client
+        )
+        if match["match_type"] == "none":
+            return {"intent": intent, "message": match["message"]}
+        apply_substitution(session, match)
+        return {"intent": intent, **match}
+
+    if intent == "조회":
+        found = select_standard_recipe(dish_name, owner_id=session.get("owner_id"), client=client)
+        if found is None:
+            return {"intent": intent, "message": DISH_NOT_FOUND_MESSAGE}
+        session["current_recipe_id"] = found["recipe_id"]
+        session["step_number"] = 1
+        session["previous_recipe_id"] = None
+        return {"intent": intent, **found}
+
+    if intent in ("등록", "정정"):
+        step = "correct_ingredient" if intent == "정정" else registration_step
+        # register_recipe()는 session["registration"]이 없는 상태에서 dish_name이
+        # 아닌 step으로 불리면 ValueError를 던진다(모듈 자체의 방어 로직). "정정"
+        # 의도가 등록 중이 아닐 때 나오면(오분류 등) 서비스가 죽는 대신 정직하게
+        # "정정할 게 없다"고 안내한다(1.5 원칙).
+        if step is None:
+            raise ValueError("등록 의도는 registration_step이 필요함")
+        try:
+            reg_result = register_recipe(session, step, registration_value, client=client)
+        except ValueError:
+            if intent == "정정":
+                return {"intent": intent, "message": NO_ACTIVE_CORRECTION_MESSAGE}
+            raise
+        return {"intent": intent, **reg_result}
+
+    raise ValueError(f"알 수 없는 intent: {intent}")
