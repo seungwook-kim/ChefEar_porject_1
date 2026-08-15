@@ -1,26 +1,27 @@
-"""작업1 — 요리명별_조리과정_60282건 CSV를 recipes/recipe_steps 테이블에 적재.
+"""요리명별_조리과정 CSV -> Supabase recipes/recipe_steps 적재 (PRD 6.1, 6.2, 6.7).
 
-db.py의 get_client() 문서에 이미 이 파일 이름이 예시로 언급돼 있다: 진짜로
-대량의 실데이터를 저장하는 작업이라 allow_mock=False로 고정한다(가짜 메모리에
-적재해봐야 "성공했다"는 착각만 주므로, Supabase 자격증명 없이는 아예 실행되지
-않게 막는다).
+## 이 스크립트가 하는 일 (전체 그림)
 
-## 이 스크립트가 CSV 원본을 그대로 넣지 않고 손보는 이유(전부 실측 확인됨)
+원본 CSV 한 줄은 이런 컬럼들을 갖고 있다: 요리명(CKG_NM), 재료(CKG_MTRL_CN),
+조회수(INQ_CNT), 조리순서(COOKING_STEPS, "1. ...\\n2. ..." 형태의 긴 문자열),
+등록일(FIRST_REG_DT) 등등. 이걸 우리 DB의 두 테이블로 옮겨야 한다.
+  - recipes      : 요리 하나당 한 행 (요리명, 재료, 조회수, ...)
+  - recipe_steps : 요리 하나에 여러 행 (1단계 텍스트, 2단계 텍스트, ...)
 
-1. 요리명(CKG_NM) 앞뒤 공백 — "닭볶음탕"과 "닭볶음탕 "처럼 같은 요리가 다른
-   행으로 잡혀있다(86쌍). 표준 레시피 선정(6.1 규칙: 동일 요리명 중 조회수
-   1위 채택)을 여기서 먼저 적용해 승자만 남긴다 — db/schema.sql의
-   uq_recipes_dish_name_standard 제약이 이걸 못 하면 insert 단계에서 막아준다.
-2. CKG_MTRL_CN/COOKING_STEPS 컬럼의 19.4%(11,683/60,282행)에 눈에 안 보이는
-   제어문자(0x07)가 섞여 있다(ml_practice/common/text_normalize.py에 팀원이
-   이미 확인해 기록해둠). TTS 발음과 정규식 매칭을 깨뜨리므로 저장 전에 제거한다.
-3. CKG_MTRL_CN(297건)/CKG_INBUN_NM(2,870건) 빈 값은 빈 문자열이 아니라 null로
-   저장한다 — 이후 로직(재료대체 검색 등)이 "없음"으로 자연스럽게 처리하도록.
+그래서 흐름은 "① CSV를 읽어서 표준 레시피만 골라내고 -> ② recipes에 넣고
+그 결과로 받은 recipe_id를 기억해뒀다가 -> ③ 그 recipe_id를 이용해
+recipe_steps에 단계별로 넣는다" 순서로 짜여 있다(run() 함수의 [1/4]~[4/4]
+출력이 이 순서를 그대로 보여준다).
 
-재시딩 시 중복 적재 방지: recipes.external_id(원본 CSV의 RCP_SNO)를 이미 DB에
-있는지 배치마다 먼저 확인하고, 있으면 건너뛴다(업서트 대신 이 방식을 쓴 이유는
-tests/fake_supabase.py가 upsert를 구현하고 있지 않아서이기도 하고, select+insert만
-쓰면 이 프로젝트의 다른 orchestration 코드와 동일한 방식이라 이해하기 쉽다).
+표준 레시피 선정 규칙(6.1): 같은 요리명(CKG_NM)이 CSV에 여러 번 나오면
+조회수(INQ_CNT)가 제일 높은 행 하나만 채택한다 — 예를 들어 "된장찌개"라는
+이름의 레시피가 여러 사람이 올린 게 섞여 있으면, 그중 제일 조회수 높은
+것만 "표준"으로 쓴다는 뜻. source 컬럼은 항상 api_standard로 채운다
+(사용자가 나중에 직접 등록하는 user_custom과 구분하기 위해).
+
+사용법:
+    python src/orchestration/load_data.py --csv <CSV 경로>
+    python src/orchestration/load_data.py --csv <CSV 경로> --dry-run   # DB 연결 없이 파싱만 검증
 """
 from __future__ import annotations
 
@@ -28,193 +29,209 @@ import argparse
 import csv
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
-# 이 파일은 src/orchestration/load_data.py에 있다. "orchestration.db"처럼 절대
-# import를 쓰려면 src/가 sys.path에 있어야 하고, ml_practice(프로젝트 루트 바로
-# 아래)의 유틸을 쓰려면 루트도 있어야 한다. pytest는 tests/conftest.py가 src/만
-# 넣어주므로, 이 스크립트를 직접 실행할 때도(`python src/orchestration/load_data.py`)
-# 똑같이 동작하도록 여기서 둘 다 방어적으로 추가한다.
-_SRC_DIR = Path(__file__).resolve().parents[1]
-_PROJECT_ROOT = _SRC_DIR.parent
-for _path in (_SRC_DIR, _PROJECT_ROOT):
-    if str(_path) not in sys.path:
-        sys.path.insert(0, str(_path))
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_SRC = PROJECT_ROOT / "src"
+if str(_SRC) not in sys.path:
+    # 이 스크립트를 `python src/orchestration/load_data.py`처럼 파일 경로로
+    # 직접 실행하면, 파이썬은 이 파일이 있는 폴더(src/orchestration)만
+    # import 검색 경로에 넣어준다. 그러면 뒤에서 쓸 `from orchestration.db
+    # import get_client`가 실패한다(orchestration이라는 이름의 폴더를
+    # src/orchestration 안에서는 찾을 수 없으니까). 그래서 한 단계 위인
+    # src 폴더를 검색 경로에 직접 추가해준다.
+    sys.path.insert(0, str(_SRC))
+DEFAULT_CSV = PROJECT_ROOT / "data" / "standard" / "요리명별_조리과정_60282건.csv"
+BATCH_SIZE = 500  # 한 번의 insert 요청에 몇 행씩 묶어 보낼지. 6만 건을 한 번에
+# 보내면 요청이 너무 커지므로, 이 크기로 나눠서(chunked()) 여러 번 나눠 보낸다.
 
-from ml_practice.common.text_normalize import strip_control_chars  # noqa: E402
-from orchestration.db import get_client  # noqa: E402
-
-DEFAULT_CSV = _PROJECT_ROOT / "요리명별_조리과정_60282건_샘플형식.csv"
-DEFAULT_BATCH_SIZE = 500
-
-_STEP_PREFIX_RE = re.compile(r"^\d+\.\s*")
-
-
-def _clean(text: str) -> str:
-    return strip_control_chars(text).strip()
+# "1. 문장내용" 형태의 한 줄을 (단계번호, 문장) 으로 뽑아내는 정규식.
+# re.S(DOTALL) 옵션은 .가 줄바꿈 문자까지 포함해서 매칭하게 해준다.
+STEP_LINE_RE = re.compile(r"^(\d+)\.\s*(.+)$", re.S)
+# CSV의 FIRST_REG_DT 컬럼 형식("20170912232340.0" 같은 "YYYYMMDDHHMMSS.0")을 잡아내는 정규식.
+FIRST_REG_DT_RE = re.compile(r"^(\d{14})\.0$")
 
 
-def parse_steps(cooking_steps: str) -> list[str]:
-    """COOKING_STEPS 원문("1. ...\\n2. ...")을 번호 없는 텍스트 목록으로 분리한다."""
-    lines = [_clean(line) for line in cooking_steps.split("\n")]
-    return [_STEP_PREFIX_RE.sub("", line) for line in lines if line]
+def parse_first_reg_dt(raw: str) -> str:
+    """"20170912232340.0" 같은 원본 날짜 문자열을 ISO 형식으로 바꾼다.
+
+    형식이 예상과 다르면(파싱 실패) 그냥 지금 시각(UTC now)으로 대체한다 —
+    날짜 하나 때문에 적재 전체를 실패시키지 않으려는 방어적 처리다.
+    """
+    m = FIRST_REG_DT_RE.match(raw.strip())
+    if not m:
+        return datetime.utcnow().isoformat()
+    return datetime.strptime(m.group(1), "%Y%m%d%H%M%S").isoformat()
 
 
-def dedupe_by_dish_name(csv_path: Path) -> tuple[list[dict], list[dict]]:
-    """요리명(공백 제거) 기준으로 묶어 조회수 1위만 남긴다(6.1 표준선정규칙).
+def parse_steps(raw: str) -> list[str]:
+    """COOKING_STEPS 컬럼(예: "1. 손질한다\\n2. 끓인다\\n3. ...")을 줄 단위로
+    쪼개서 번호를 떼어낸 순수 문장 리스트로 만든다.
 
-    반환값: (남긴 행 목록, 버린 행 목록 — 감사(audit) 로그용으로 사유와 함께)
+    예) "1. 닭을 손질해주세요.\\n2. 감자를 썰어주세요." ->
+        ["닭을 손질해주세요.", "감자를 썰어주세요."]
+
+    이렇게 번호를 미리 떼어내는 이유: recipe_steps 테이블에는 이미
+    step_number라는 별도 컬럼이 있어서, 텍스트 안에 "1. "이 또 들어있으면
+    "1. 1. 닭을 손질해주세요."처럼 중복돼 보기 안 좋기 때문이다.
+    """
+    texts = []
+    for line in raw.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        m = STEP_LINE_RE.match(line)
+        texts.append(m.group(2).strip() if m else line)  # 번호 패턴이 안 맞으면 원문 그대로 둠(방어적 처리)
+    return texts
+
+
+def select_standard_rows(csv_path: Path) -> dict[str, dict]:
+    """6.1 규칙: 동일 CKG_NM 다건 시 INQ_CNT 1위 채택 (동률이면 먼저 나온 행 유지).
+
+    winners 딕셔너리의 키는 요리명, 값은 "지금까지 본 것 중 조회수가 제일
+    높았던 행"이다. CSV를 한 줄씩 읽으면서, 이미 같은 요리명을 본 적 있으면
+    조회수를 비교해서 더 높을 때만 교체한다 — 이게 바로 "동일 요리명 다건 시
+    조회수 1위 채택"을 코드로 옮긴 것이다. 전체 CSV를 다 읽고 나면 winners에는
+    요리명마다 딱 하나, 제일 조회수 높은 행만 남는다.
     """
     winners: dict[str, dict] = {}
-    discarded: list[dict] = []
-
-    with csv_path.open(encoding="utf-8-sig", newline="") as f:
-        for row in csv.DictReader(f):
-            dish_name = row["CKG_NM"].strip()
-            view_count = int(row["INQ_CNT"])
-            current = winners.get(dish_name)
-            if current is None:
-                winners[dish_name] = row
-                continue
-            if view_count > int(current["INQ_CNT"]):
-                discarded.append({**current, "discard_reason": f'"{dish_name}" 중복, 조회수 낮음'})
-                winners[dish_name] = row
-            else:
-                discarded.append({**row, "discard_reason": f'"{dish_name}" 중복, 조회수 낮음'})
-
-    return list(winners.values()), discarded
+    with csv_path.open(encoding="utf-8-sig") as f:  # utf-8-sig: 엑셀이 저장한 BOM(파일 맨 앞의 보이지 않는 표시)을 자동으로 무시
+        reader = csv.DictReader(f)  # 첫 줄을 헤더로 보고, 이후 각 줄을 {컬럼명: 값} 딕셔너리로 돌려줌
+        for row in reader:
+            name = row["CKG_NM"].strip()
+            if not name:
+                continue  # 요리명이 빈 값인 이상한 행은 건너뜀
+            inq = int(row["INQ_CNT"])
+            current = winners.get(name)
+            if current is None or inq > int(current["INQ_CNT"]):
+                winners[name] = row
+    return winners
 
 
-def build_recipe_payload(row: dict) -> tuple[dict, list[str]]:
-    """CSV 한 행 -> (recipes에 넣을 딕셔너리, recipe_steps 텍스트 목록)."""
-    ingredients = _clean(row["CKG_MTRL_CN"])
-    servings = row["CKG_INBUN_NM"].strip()
-    recipe = {
-        "dish_name": row["CKG_NM"].strip(),
-        "ingredients": ingredients or None,
-        "servings": servings or None,
-        "source": "api_standard",
-        "view_count": int(row["INQ_CNT"]),
-        "external_id": int(row["RCP_SNO"]),
-    }
-    steps = parse_steps(row["COOKING_STEPS"])
-    return recipe, steps
+def chunked(seq: list, size: int):
+    """리스트를 size개씩 잘라서 순서대로 돌려주는 제너레이터.
+
+    예) chunked([1,2,3,4,5], 2) -> [1,2], [3,4], [5] 를 순서대로 준다.
+    Supabase에 한 번에 너무 많은 행을 insert하면 요청이 실패할 수 있어서,
+    이렇게 작은 묶음으로 나눠 여러 번 보내려고 쓴다.
+    """
+    for i in range(0, len(seq), size):
+        yield seq[i : i + size]
 
 
-def _chunks(items: list, size: int):
-    for i in range(0, len(items), size):
-        yield items[i : i + size]
-
-
-def load_data(
-    csv_path: Path = DEFAULT_CSV,
-    client=None,
-    batch_size: int = DEFAULT_BATCH_SIZE,
-    limit: int | None = None,
-    dry_run: bool = False,
-) -> dict:
-    """CSV를 읽어 recipes/recipe_steps에 적재한다. 반환값은 실행 요약 통계."""
-    client = client or get_client(allow_mock=False)
-
-    rows, discarded = dedupe_by_dish_name(csv_path)
-    unique_dish_names = len(rows)
-    if limit is not None:
-        rows = rows[:limit]
-
-    inserted_recipes = 0
-    skipped_existing = 0
-    inserted_steps = 0
-
-    for batch in _chunks(rows, batch_size):
-        payloads = []
-        steps_by_external_id = {}
-        for row in batch:
-            recipe, steps = build_recipe_payload(row)
-            payloads.append(recipe)
-            steps_by_external_id[recipe["external_id"]] = steps
-
-        external_ids = [p["external_id"] for p in payloads]
-        existing = (
-            client.table("recipes")
-            .select("external_id")
-            .in_("external_id", external_ids)
-            .execute()
-            .data
-        )
-        existing_ids = {r["external_id"] for r in existing}
-        new_payloads = [p for p in payloads if p["external_id"] not in existing_ids]
-        skipped_existing += len(payloads) - len(new_payloads)
-
-        if not new_payloads:
-            continue
-        if dry_run:
-            inserted_recipes += len(new_payloads)
-            inserted_steps += sum(len(steps_by_external_id[p["external_id"]]) for p in new_payloads)
-            continue
-
-        inserted = client.table("recipes").insert(new_payloads).execute().data
-        step_payload = [
-            {"recipe_id": recipe["id"], "step_number": i, "step_text": text, "source": "api_standard"}
-            for recipe in inserted
-            for i, text in enumerate(steps_by_external_id[recipe["external_id"]], start=1)
-        ]
-        if step_payload:
-            client.table("recipe_steps").insert(step_payload).execute()
-
-        inserted_recipes += len(inserted)
-        inserted_steps += len(step_payload)
-
-    if discarded:
-        _write_discard_log(csv_path, discarded)
-
+def build_recipe_payload(row: dict) -> dict:
+    """CSV의 한 행(딕셔너리)을 recipes 테이블에 그대로 넣을 수 있는 딕셔너리로 변환한다."""
     return {
-        "unique_dish_names_in_csv": unique_dish_names,  # limit과 무관하게 항상 파일 전체 기준
-        "duplicate_dish_names_discarded": len(discarded),
-        "recipes_processed_this_run": len(rows),  # limit 적용된 실제 처리 건수
-        "recipes_inserted": inserted_recipes,
-        "recipes_skipped_existing": skipped_existing,
-        "steps_inserted": inserted_steps,
-        "dry_run": dry_run,
+        "dish_name": row["CKG_NM"].strip(),
+        "ingredients": row["CKG_MTRL_CN"].strip(),
+        "source": "api_standard",
+        "origin_id": None,
+        "view_count": int(row["INQ_CNT"]),
+        "created_at": parse_first_reg_dt(row["FIRST_REG_DT"]),
     }
 
 
-def _write_discard_log(csv_path: Path, discarded: list[dict]) -> Path:
-    """조회수 낮아서 버린 중복 행을 감사용으로 남긴다(왜 60,282건이 아닌지 추적 가능하게)."""
-    log_path = csv_path.parent / "data" / "standard" / "load_data_discarded_duplicates.csv"
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["RCP_SNO", "CKG_NM", "INQ_CNT", "discard_reason"])
-        writer.writeheader()
-        for row in discarded:
-            writer.writerow(
+def run(csv_path: Path, dry_run: bool) -> None:
+    """실제 적재 과정 전체. dry_run=True면 CSV 파싱까지만 하고 DB에는 손대지 않는다
+    (Supabase 자격증명 없이도 로직이 맞는지 미리 확인할 수 있게 만든 옵션).
+    """
+    if not csv_path.exists():
+        sys.exit(f"CSV 파일을 찾을 수 없음: {csv_path}")
+
+    print(f"[1/4] CSV 파싱 및 6.1 표준선정 규칙 적용 중: {csv_path}")
+    winners = select_standard_rows(csv_path)
+    rows = list(winners.values())
+    print(f"      -> 고유 요리명 {len(rows)}건 선정")
+
+    total_steps = sum(len(parse_steps(row["COOKING_STEPS"])) for row in rows)
+    print(f"      -> 총 조리순서(step) {total_steps}건")
+
+    if dry_run:
+        print("[dry-run] Supabase 연결/적재 생략, 파싱 결과만 확인함")
+        return
+
+    from orchestration.db import get_client
+
+    try:
+        # allow_mock=False: 이 스크립트는 실데이터 6만여 건을 "진짜로" 적재하는 게
+        # 목적이라, 자격증명이 없다고 가짜 메모리에 조용히 적재해버리면 "성공했다"는
+        # 착각만 준다. 그래서 여기만 예외적으로 mock 폴백을 막고 확실히 실패시킨다.
+        client = get_client(allow_mock=False)
+    except RuntimeError as e:
+        sys.exit(str(e))
+
+    # 이 스크립트를 여러 번 실행할 수도 있으므로(예: 나중에 전처리된 CSV로
+    # 교체해서 다시 돌릴 때), 매번 새로 적재하기 전에 기존 api_standard
+    # 데이터를 먼저 지운다. recipe_steps을 먼저 지우는 이유: recipe_steps의
+    # recipe_id가 recipes.id를 참조하고 있어서(외래키), recipes를 먼저 지우면
+    # 참조가 끊겨 에러가 날 수 있다 — 항상 "자식 테이블 먼저, 부모 테이블 나중"
+    # 순서로 지워야 한다.
+    print("[2/4] 기존 api_standard 레코드 삭제 (재실행 대비)")
+    client.table("recipe_steps").delete().eq("source", "api_standard").execute()
+    client.table("recipes").delete().eq("source", "api_standard").execute()
+
+    print("[3/4] recipes 적재 중")
+    dish_to_id: dict[str, str] = {}  # "요리명 -> 방금 DB가 발급해준 recipe_id" 를 기억해두는 표
+    for batch in chunked(rows, BATCH_SIZE):
+        payload = [build_recipe_payload(row) for row in batch]
+        res = client.table("recipes").insert(payload).execute()
+        # insert()의 결과(res.data)에는 방금 넣은 행들이 id까지 채워진 채로 돌아온다.
+        # 이걸 dish_to_id에 기록해둬야, 바로 다음 단계에서 "이 요리의 조리순서를
+        # recipe_steps에 넣을 때 recipe_id로 뭘 써야 하는지" 알 수 있다.
+        for inserted in res.data:
+            dish_to_id[inserted["dish_name"]] = inserted["id"]
+        print(f"      -> {len(dish_to_id)}/{len(rows)}")
+
+    print("[4/4] recipe_steps 적재 중")
+    step_payload = []
+    for row in rows:
+        recipe_id = dish_to_id[row["CKG_NM"].strip()]  # 위에서 기억해둔 recipe_id를 꺼내 씀
+        for i, text in enumerate(parse_steps(row["COOKING_STEPS"]), start=1):
+            step_payload.append(
                 {
-                    "RCP_SNO": row["RCP_SNO"],
-                    "CKG_NM": row["CKG_NM"],
-                    "INQ_CNT": row["INQ_CNT"],
-                    "discard_reason": row["discard_reason"],
+                    "recipe_id": recipe_id,
+                    "step_number": i,
+                    "step_text": text,
+                    "source": "api_standard",
                 }
             )
-    return log_path
+    inserted_steps = 0
+    for batch in chunked(step_payload, BATCH_SIZE):
+        client.table("recipe_steps").insert(batch).execute()
+        inserted_steps += len(batch)
+        print(f"      -> {inserted_steps}/{len(step_payload)}")
 
-
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--csv", type=Path, default=DEFAULT_CSV, help="적재할 CSV 경로")
-    parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
-    parser.add_argument("--limit", type=int, default=None, help="테스트용: 앞에서 N개 요리명만 적재")
-    parser.add_argument(
-        "--dry-run", action="store_true", help="실제로 insert하지 않고 통계만 확인(먼저 이걸로 검증 권장)"
+    # 마지막으로 "진짜로 몇 건이 들어갔는지" DB에 직접 물어봐서 확인한다.
+    # count="exact"를 select에 넘기면 행 데이터 대신(또는 함께) 정확한 개수를 세어준다.
+    print("[검증] 행 수 확인")
+    recipes_count = (
+        client.table("recipes").select("id", count="exact").eq("source", "api_standard").execute().count
     )
-    return parser.parse_args()
+    steps_count = (
+        client.table("recipe_steps")
+        .select("recipe_id", count="exact")
+        .eq("source", "api_standard")
+        .execute()
+        .count
+    )
+    print(f"recipes(api_standard) = {recipes_count}")
+    print(f"recipe_steps(api_standard) = {steps_count}")
+
+
+def main() -> None:
+    """터미널에서 이 스크립트를 실행했을 때의 진입점. --csv, --dry-run 같은
+    커맨드라인 옵션을 해석해서 run()에 넘겨준다(argparse는 파이썬 표준
+    커맨드라인 인자 파서다).
+    """
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--csv", type=Path, default=DEFAULT_CSV, help="요리명별_조리과정 CSV 경로")
+    parser.add_argument("--dry-run", action="store_true", help="DB 연결 없이 파싱만 검증")
+    args = parser.parse_args()
+    run(args.csv, args.dry_run)
 
 
 if __name__ == "__main__":
-    args = _parse_args()
-    summary = load_data(
-        csv_path=args.csv,
-        batch_size=args.batch_size,
-        limit=args.limit,
-        dry_run=args.dry_run,
-    )
-    for key, value in summary.items():
-        print(f"{key}: {value}")
+    # 이 파일을 직접 실행했을 때만(예: `python load_data.py`) main()이 돌고,
+    # 다른 파일에서 `import load_data`로 불러올 땐 자동으로 실행되지 않는다.
+    main()
