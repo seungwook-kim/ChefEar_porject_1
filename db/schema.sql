@@ -51,3 +51,37 @@ create table if not exists recipe_steps (
 create index if not exists idx_recipes_dish_name on recipes(dish_name);  -- 요리명으로 조회할 때(select_standard_recipe 등)
 create index if not exists idx_recipes_source on recipes(source);        -- api_standard/user_custom 구분 조회할 때
 create index if not exists idx_recipes_owner_id on recipes(owner_id);    -- 특정 사용자의 user_custom만 찾을 때
+
+-- ── 작업1(요리명별_조리과정_60282건.csv 적재, load_data.py) 준비 ──────────
+-- 위의 create table은 테이블이 이미 Supabase에 만들어져 있으면 아무것도 안 바꾸므로,
+-- 이미 만든 사람도 다시 붙여넣어 실행하면 안전하게 아래 변경분만 추가로 반영되도록
+-- alter table(컬럼 추가)과 if not exists(재실행 안전)를 쓴다.
+
+-- external_id: 원본 CSV의 RCP_SNO(레시피 번호). load_data.py를 재실행해도 같은
+-- 레시피가 중복으로 쌓이지 않게 막아주는 키로 쓴다(같은 external_id면 건너뜀).
+-- user_custom 레시피는 원본 CSV 번호가 없으므로 null로 둔다(unique 제약은 null끼리는
+-- 서로 다른 값으로 취급하므로 null이 여러 개 있어도 문제없음).
+alter table recipes add column if not exists external_id integer unique;
+
+-- servings: 원본 CSV의 CKG_INBUN_NM(인분수, 예: "3인분"). 가공 없이 원문 그대로 저장.
+alter table recipes add column if not exists servings text;
+
+-- dish_name에 앞뒤 공백이 섞여 들어오면(예: "닭볶음탕 ") 같은 요리가 서로 다른 행으로
+-- 취급돼 표준 레시피 선정(6.1 규칙)이 깨진다. 실제로 원본 CSV에서 이 문제로 86쌍이
+-- 발견됐다(예: "닭볶음탕"과 "닭볶음탕 "). DB 차원에서 공백 섞인 값 저장을 원천 차단한다.
+-- (postgres는 constraint에 if not exists 문법이 없어서 존재 여부를 직접 확인하는
+-- do 블록으로 감싼다 — 재실행해도 중복 추가 에러가 안 나게 하기 위함)
+do $$
+begin
+    if not exists (
+        select 1 from pg_constraint where conname = 'dish_name_trimmed'
+    ) then
+        alter table recipes add constraint dish_name_trimmed check (dish_name = btrim(dish_name));
+    end if;
+end $$;
+
+-- api_standard(표준 데이터)는 요리명 하나당 딱 한 행만 있어야 한다(6.1 표준선정규칙,
+-- load_data.py가 적재 전에 조회수 1위만 남기고 나머지는 버림). user_custom은 EC-17에
+-- 따라 같은 요리명으로 여러 버전을 가질 수 있으므로 이 제약에서 제외한다(where 조건).
+create unique index if not exists uq_recipes_dish_name_standard
+    on recipes (dish_name) where source = 'api_standard';
