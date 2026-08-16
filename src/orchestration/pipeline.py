@@ -162,7 +162,7 @@ def handle_utterance(
             context_recipe_id, requested_ingredient or [], excluded_ingredient, client=client
         )
         if match["match_type"] == "none":
-            return {"intent": intent, "message": match["message"]}
+            return {"intent": intent, "match_type": "none", "message": match["message"]}
         apply_substitution(session, match)
         return {"intent": intent, **match}
 
