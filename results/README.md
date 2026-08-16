@@ -15,13 +15,13 @@ STT/TTS 파인튜닝 전/후 정량 비교 자료(WER, 추론 속도 등)를 쌓
 | 폴더 | 예정 산출물 | 만드는 스크립트 | 비고 |
 |---|---|---|---|
 | `stt/` | `ChefEar_STT_3model_comparison_final.csv` 등 | `src/stt/infer.py`의 `run_batch_test()` | 하주성님 쪽에 Whisper Small/wav2vec2/Large-v3-turbo 비교 결과가 이미 있음 — 이 폴더로 아직 안 옮겨짐 |
-| `tts/` | `cpu_inference_test.csv`, 라운드트립 WER 결과 | `tests/tts_cpu_inference_test.py`(이미 있음), 별도 작업 공간의 라운드트립 평가 노트북 | CPU 속도는 아직 베이스 모델 기준으로만 측정됨(파인튜닝 모델로 재측정 필요) |
+| `tts/` | `cpu_inference_test.csv`, `roundtrip_wer.csv` | `tests/tts_cpu_inference_test.py`, `tests/tts_stt_roundtrip_test.py`(둘 다 이 저장소에 있음) | CPU 속도는 아직 베이스 모델 기준으로만 측정됨(파인튜닝 모델로 재측정 필요). 라운드트립은 GPU 환경에서만 실행 가능 |
 
 ## 진행 방법
 
-지금 바로 만들어낼 수 있는 결과는 `tests/tts_cpu_inference_test.py` 실행 결과(`results/tts/cpu_inference_test.csv`)
-뿐이다. 나머지(STT 3모델 비교 CSV, TTS 라운드트립 WER)는 이미 실행은 됐으니 결과 파일만 이 폴더로
-옮겨 담으면 된다.
+지금 바로 만들어낼 수 있는 결과는 `tests/tts_cpu_inference_test.py`(`cpu_inference_test.csv`, GPU 불필요)와
+`tests/tts_stt_roundtrip_test.py`(`roundtrip_wer.csv`, GPU 필요) 둘이다. 나머지(STT 3모델 비교 CSV)는
+이미 실행은 됐으니 결과 파일만 이 폴더로 옮겨 담으면 된다.
 
 ## 관련 문서
 
