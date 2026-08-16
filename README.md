@@ -1,3 +1,14 @@
+---
+title: ChefEar
+emoji: 👨‍🍳
+colorFrom: yellow
+colorTo: orange
+sdk: streamlit
+sdk_version: "1.61.1"
+app_file: src/app.py
+pinned: false
+---
+
 # 👨‍🍳 AI Human 7기 : Chef Ear
 
 ## 👥 팀 정보
