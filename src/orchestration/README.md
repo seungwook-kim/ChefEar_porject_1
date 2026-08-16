@@ -25,7 +25,7 @@ Streamlit 세션(`st.session_state`)을 함수 인자로 받는 형태라 Stream
 1. `.env`에 `SUPABASE_URL`/`SUPABASE_KEY`를 채우면 코드 수정 없이 mock → 실제 DB로 자동 전환된다(`db.py` docstring 참고).
 2. `data/standard/`의 표준 레시피 CSV를 `load_data.py --csv`로 적재한다(현재 DB엔 LLM 생성 조리과정 60,196건 적재 완료, `../../db/README.md` 참고).
 3. `pipeline.py`의 `handle_utterance(session, utterance, ...)`가 `app.py`에서 호출할 최종 진입점이다. 주의할 점: `classify_intent()`는 의도만 분류하고 요리명·재료명 같은 세부 정보(entity)는 추출하지 않는다(이 프로젝트에 그런 NLU 로직이 따로 없음) — 그래서 `조회`(`dish_name`)/`재료대체`(`requested_ingredient`/`excluded_ingredient`)/`등록`(`registration_step`/`registration_value`) 의도는 그 값을 호출부(`app.py`)가 직접 채워서 넘겨야 한다.
-4. STT(`src/stt/infer.py`)는 배포 완료. TTS(`src/tts/infer.py`)는 아직 비어있으므로([../tts/README.md](../tts/README.md) 참고) 지금은 `handle_utterance()`의 텍스트 응답을 화면에 그대로 보여주고, TTS 준비되면 그 응답을 `tts_synthesize()`에 넘기는 한 줄만 추가하면 된다.
+4. STT(`src/stt/infer.py`)는 모델 확정·평가 완료, 다만 배포용 단일 발화 함수(`stt_transcribe()`, faster-whisper 변환)는 아직 정리 필요([../stt/README.md](../stt/README.md) 참고). TTS(`src/tts/infer.py`)는 `tts_synthesize(text) -> (waveform, sample_rate)`가 작성 완료됐다([../tts/README.md](../tts/README.md) 참고) — `handle_utterance()`의 텍스트 응답을 이 함수에 넘기고 반환값을 `st.audio()`로 재생하면 된다.
 
 ## 테스트
 
