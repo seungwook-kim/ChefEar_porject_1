@@ -16,9 +16,15 @@ from orchestration.recipe_search import search_by_ingredient_content, search_var
 
 @pytest.fixture(autouse=True)
 def _no_supabase_credentials(monkeypatch):
-    """이 테스트 파일 안에서는 SUPABASE_URL/KEY를 강제로 비워서 mock 폴백 경로를 타게 한다."""
+    """이 테스트 파일 안에서는 SUPABASE_URL/KEY를 강제로 비워서 mock 폴백 경로를 타게 한다.
+
+    load_env()도 같이 no-op으로 막아야 한다 — 실제 .env 파일이 있으면(이제 이
+    프로젝트엔 있음) delenv로 지워도 get_client()가 호출하는 load_env()가
+    os.environ.setdefault()로 파일에서 다시 채워 넣어서 delenv가 무의미해진다.
+    """
     monkeypatch.delenv("SUPABASE_URL", raising=False)
     monkeypatch.delenv("SUPABASE_KEY", raising=False)
+    monkeypatch.setattr(db, "load_env", lambda *args, **kwargs: None)
     db._mock_client_singleton.cache_clear()  # 테스트끼리 가짜 DB 상태가 새지 않게 매번 초기화
 
 

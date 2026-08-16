@@ -1,10 +1,12 @@
-"""pipeline.py 테스트 — 문서 7.4/7.1.1 AC-07~09, AC-12/13."""
+"""pipeline.py 테스트 — 문서 7.4/7.1.1 AC-07~09, AC-12/13, handle_utterance() 라우팅."""
 from fake_supabase import FakeSupabaseClient
 
 from orchestration.pipeline import (
+    DISH_NOT_FOUND_MESSAGE,
     NOT_AVAILABLE_MESSAGE,
     advance_step,
     get_precomputed_steps,
+    handle_utterance,
     manual_fallback,
 )
 
@@ -79,3 +81,104 @@ def test_ac09_manual_button_bypasses_intent_classification():
 
     assert result["step_number"] == 2
     assert result["step"]["text"] == "2단계"
+
+
+def test_handle_utterance_progress_advances_step():
+    client = FakeSupabaseClient()
+    recipe = _seed_recipe_with_steps(client)
+    session = {"current_recipe_id": recipe["id"], "step_number": 1}
+
+    result = handle_utterance(session, "다음", client=client)
+
+    assert result["intent"] == "진행"
+    assert result["step_number"] == 2
+    assert result["step"]["text"] == "2단계"
+
+
+def test_handle_utterance_resume_repeats_current_step():
+    client = FakeSupabaseClient()
+    recipe = _seed_recipe_with_steps(client)
+    session = {"current_recipe_id": recipe["id"], "step_number": 2}
+
+    result = handle_utterance(session, "다시", client=client)
+
+    assert result["intent"] == "재청취"
+    assert result["step_number"] == 2
+
+
+def test_handle_utterance_previous_at_step_one_flags_no_previous():
+    client = FakeSupabaseClient()
+    recipe = _seed_recipe_with_steps(client)
+    session = {"current_recipe_id": recipe["id"], "step_number": 1}
+
+    result = handle_utterance(session, "이전", client=client)
+
+    assert result["intent"] == "이전"
+    assert result["no_previous"] is True
+
+
+def test_handle_utterance_substitution_updates_session_and_can_be_cancelled():
+    client = FakeSupabaseClient()
+    base = _seed_recipe_with_steps(client)
+    client.table("recipes").seed({"dish_name": "새우된장찌개", "ingredients": "새우", "source": "api_standard"})
+    session = {"current_recipe_id": base["id"], "step_number": 2}
+
+    result = handle_utterance(session, "새우도 넣어도 될까?", requested_ingredient=["새우"], client=client)
+
+    assert result["intent"] == "재료대체"
+    assert result["result_dish_name"] == "새우된장찌개"
+    assert session["current_recipe_id"] == result["result_recipe_id"]
+    assert session["previous_recipe_id"] == base["id"]
+    assert session["step_number"] == 2  # 7.1.1: 재료대체 후에도 step_number는 그대로 유지
+
+    cancel_result = handle_utterance(session, "취소해줘", client=client)
+
+    assert cancel_result["intent"] == "취소"
+    assert cancel_result["rolled_back"] is True
+    assert session["current_recipe_id"] == base["id"]
+
+
+def test_handle_utterance_search_sets_current_recipe():
+    client = FakeSupabaseClient()
+    recipe = client.table("recipes").seed({"dish_name": "떡볶이", "ingredients": "떡", "source": "api_standard"})
+    session: dict = {}
+
+    result = handle_utterance(session, "떡볶이 어떻게 만들어?", dish_name="떡볶이", client=client)
+
+    assert result["intent"] == "조회"
+    assert session["current_recipe_id"] == recipe["id"]
+    assert session["step_number"] == 1
+
+
+def test_handle_utterance_search_dish_not_found_is_honest_about_it():
+    client = FakeSupabaseClient()
+    session: dict = {}
+
+    result = handle_utterance(session, "떡볶이 어떻게 만들어?", dish_name="세상에없는요리", client=client)
+
+    assert result["intent"] == "조회"
+    assert result["message"] == DISH_NOT_FOUND_MESSAGE
+    assert "current_recipe_id" not in session
+
+
+def test_handle_utterance_registration_routes_to_register_recipe():
+    client = FakeSupabaseClient()
+    session: dict = {}
+
+    result = handle_utterance(
+        session, "새 레시피 등록하고 싶어", registration_step="dish_name", registration_value="김치찜", client=client
+    )
+
+    assert result["intent"] == "등록"
+    assert result["prompt"] == "김치찜에 들어가는 재료를 알려주세요."
+    assert session["registration"]["dish_name"] == "김치찜"
+
+
+def test_handle_utterance_unclassified_returns_fallback_message():
+    client = FakeSupabaseClient()
+    session: dict = {}
+
+    result = handle_utterance(session, "어… 그거…", client=client)
+
+    assert result["intent"] == "미분류"
+    assert "message" in result
