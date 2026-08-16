@@ -43,7 +43,7 @@ wav2vec2는 ChefEar 요리 문장에서 숫자·단위·일부 한국어 음절 
 
 ## 현재 진행 / 남은 작업
 
-* TTS → STT 검증 통합
+* TTS → STT 검증 통합 — 실행 스크립트가 `tests/tts_stt_roundtrip_test.py`로 이 저장소에 추가됨(GPU 환경에서 `python tests/tts_stt_roundtrip_test.py` 실행, 결과는 `results/tts/roundtrip_wer.csv`)
 * 실제 통합환경에서 오류 유형 수집
 * `stt_transcribe()` 단일 발화 추론 함수 정리
 * `src/orchestration/pipeline.py` 연결 확인
