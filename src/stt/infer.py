@@ -36,11 +36,12 @@ print(result)
 
 from pathlib import Path
 from typing import Optional
-
+import os
 import librosa
 import pandas as pd
 import torch
 
+from dotenv import load_dotenv
 from jiwer import wer
 from peft import PeftModel
 
@@ -51,14 +52,19 @@ from transformers import (
 )
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(PROJECT_ROOT / ".env")
+
 # ============================================================
 # 모델 설정
 # ============================================================
 
 MODEL_ID = "openai/whisper-large-v3-turbo"
 
-HF_ADAPTER_ID = "leeony/chefear-stt-large-v3-turbo"
-
+HF_ADAPTER_ID = (
+    os.environ.get("HF_STT_MODEL_REPO")
+    or "leeony/chefear-stt-large-v3-turbo"
+)
 
 # 모델은 최초 1번만 로드하고
 # 100개 음성에서 계속 재사용
