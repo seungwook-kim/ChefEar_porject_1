@@ -19,6 +19,7 @@ env-main/
 data/kss/
 data/synthesized/
 models/
+results/tts/roundtrip_audio/
 
 # 대용량 원본 CSV(수십MB) — git 커밋 금지, load_data.py --csv 로 외부 경로 직접 참조
 data/standard/*.csv
