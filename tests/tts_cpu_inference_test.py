@@ -23,7 +23,13 @@ torch.set_num_threads(2)
 
 from qwen_tts import Qwen3TTSModel
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# 일반 스크립트 실행(`python tests/tts_cpu_inference_test.py`)이면 __file__ 기준으로 잡고,
+# Colab/Jupyter 셀에 내용을 붙여넣어 직접 실행한 경우(__file__ 없음)엔 현재 작업 디렉터리를
+# 저장소 루트로 가정한다(둘 다 models/tts_finetuned, results/tts는 루트 기준 상대경로라 동일하게 맞음).
+if "__file__" in globals():
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent
+else:
+    PROJECT_ROOT = Path.cwd()
 CHECKPOINT_DIR = PROJECT_ROOT / "models" / "tts_finetuned"
 RESULTS_CSV = PROJECT_ROOT / "results" / "tts" / "cpu_inference_test.csv"
 BASE_MODEL_ID = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
@@ -35,6 +41,10 @@ DEMO_REF_TEXT = (
     "But you know what? You blew it! And thanks to you."
 )
 
+# ChefEar 파인튜닝 체크포인트는 tts_model_type="custom_voice"라 voice_clone이 아니라
+# generate_custom_voice(speaker=...)를 써야 한다(src/tts/infer.py와 동일한 화자명).
+SPEAKER = "kss_speaker_a100"
+
 SENTENCES = [
     "약불로 5분간 끓여주세요",
     "양파와 마늘을 다진 뒤, 팬에 기름을 두르고 중불에서 노릇하게 볶아주세요",
@@ -43,6 +53,11 @@ SENTENCES = [
 
 RUNS_PER_SENTENCE = 3  # 1회차 워밍업 제외, 2·3회차 평균
 TARGET_SECONDS = 5.0
+
+# 체크포인트의 generation_config.json에 max_new_tokens=8192가 박혀있고 do_sample=True라,
+# 명시적으로 안 넘기면 EOS를 늦게 뽑는 시행에서 CPU 기준 1시간+까지 폭주할 수 있다(실측: 0.5초/토큰).
+# 위 SENTENCES 중 가장 긴 문장도 12Hz 기준 250토큰(~20초 분량)이면 충분히 자연 종료된다.
+MAX_NEW_TOKENS = 250
 
 
 def find_latest_checkpoint(checkpoint_dir: Path) -> Path | None:
@@ -81,7 +96,9 @@ def main():
     load_seconds = time.perf_counter() - load_start
     print(f"[모델 로딩 시간] {load_seconds:.2f}초\n")
 
-    is_base_model = getattr(model.model, "tts_model_type", None) == "base"
+    model_type = getattr(model.model, "tts_model_type", None)
+    print(f"[모델 타입] {model_type}")
+    is_base_model = model_type == "base"
 
     voice_clone_prompt = None
     if is_base_model:
@@ -103,18 +120,24 @@ def main():
         timings = []
         for run in range(1, RUNS_PER_SENTENCE + 1):
             start = time.perf_counter()
-            if is_base_model:
+            if model_type == "base":
                 model.generate_voice_clone(
                     text=sentence,
                     language="Korean",
                     voice_clone_prompt=voice_clone_prompt,
+                    max_new_tokens=MAX_NEW_TOKENS,
                 )
-            else:
-                model.generate_voice_clone(
+            elif model_type == "custom_voice":
+                model.generate_custom_voice(
                     text=sentence,
                     language="Korean",
-                    ref_audio=DEMO_REF_AUDIO,
-                    ref_text=DEMO_REF_TEXT,
+                    speaker=SPEAKER,
+                    max_new_tokens=MAX_NEW_TOKENS,
+                )
+            else:
+                raise ValueError(
+                    f"이 벤치마크가 아직 지원하지 않는 tts_model_type={model_type!r} — "
+                    "generate_voice_design 등 다른 경로 추가 필요"
                 )
             elapsed = time.perf_counter() - start
 
