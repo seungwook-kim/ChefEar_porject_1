@@ -1,17 +1,20 @@
-# ChefEar STT - 확인된 핵심 버전
+# ChefEar STT Environment
+# Python 3.11.9
+# PyTorch CUDA 12.4 별도 설치:
+# python -m pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
 
-Python: 3.11.9
-torch==2.5.1+cu124
-transformers==4.46.3
+transformers==4.57.3
+accelerate==1.12.0
 peft==0.20.0
 bitsandbytes==0.50.0
-
-# 사용 패키지
-
-accelerate==1.14.0
-librosa==0.11.0
-pandas==3.0.5
-jiwer==4.0.0
-tqdm==4.70.0
+tokenizers==0.22.2
 huggingface_hub==0.36.2
+
+python-dotenv==1.2.3
+librosa==0.11.0
 soundfile==0.14.0
+jiwer==4.0.0
+pandas==3.0.5
+numpy==2.4.6
+tqdm==4.70.0
+psutil==7.2.2
