@@ -8,7 +8,7 @@
 2. **수동 통합테스트 문서/벤치마크 스크립트** — pytest가 아니라 사람이 직접 실행/체크하는 형태로
    의도된 것(`docs/ChefEar_팀_진행_가이드_v2.md` 106번째 줄에 명시)
 
-## 파일별 상태 (확인: 2026-08-16)
+## 파일별 상태 (확인: 2026-08-17)
 
 | 파일 | 상태 | 성격 |
 |---|---|---|
@@ -24,7 +24,6 @@
 | `integration_test.md` | **작성 완료(137줄)** | AC-14~16(GWT) 기준 **수동** 시나리오 체크리스트(시나리오 A~D + AC-15 반복테스트 + AC-16 자리) — `handle_utterance()`를 파이썬에서 직접 호출하는 방식, `app.py`가 없어도 지금 바로 실행 가능. AC-16(TTS)만 아직 블로킹 표시 |
 | `integration_scenario_test.py` | 작성됨(신규) | 위 `integration_test.md`의 시나리오 A~D + AC-15를 코드로 그대로 옮겨 순차 실행하는 진단 스크립트. 실제 DB 연결(`allow_mock=False`) 필요, GPU 불필요. 실행 결과(PASS/FAIL)를 보고 `integration_test.md` 체크박스를 채우는 용도 — pytest 아님, assert로 죽지 않고 끝까지 돌고 마지막에 요약 출력 |
 | `tts_cpu_inference_test.py` | 작성됨(신규, untracked) | Qwen3-TTS CPU 추론 속도 실측(HF Spaces CPU Basic 2 vCPU 흉내), 5초 목표 PASS/FAIL 판정. `qwen_tts` 패키지 필요 |
-| `tts_stt_roundtrip_test.py` | 작성됨(신규) | `src/tts/infer.py`로 합성 → `src/stt/infer.py`로 재인식 → WER 계산(AC-16 관련). **GPU 필요**(STT의 4bit 로딩이 CUDA 전용) + private TTS repo라 `HF_TOKEN` 필요 |
 
 ## 진행 방법
 
@@ -37,8 +36,9 @@
 
 ## 필요한 것 / 막힌 것
 
-- AC-16(TTS)은 파인튜닝 결과가 나와야 채울 수 있음 — TTS 자체는 완료됐으니(`../src/tts/README.md`
-  참고) WER/청취 평가 수치만 채우면 됨
+- AC-16(TTS)은 파인튜닝 결과가 나와야 채울 수 있음 — ⚠️ 지금 파인튜닝 결과물에 음성 품질 문제(원인
+  분석 중)와 CPU 배포 속도 미달이 확인돼서(`../src/tts/README.md` 참고), WER/청취 평가 수치를 채우기
+  전에 그 두 가지부터 해결해야 의미 있는 AC-16 결과가 나옴
 - `src/app.py`가 비어있어 "화면에서 실제로 눌러보는" 통합테스트는 아직 불가능 — 지금은
   `integration_test.md`대로 함수 단위(`handle_utterance()`)로 확인하는 수준까지만 가능. 최상위
   `ui/`(mock 데이터 프로토타입, `../ui/README.md`)로 화면 흐름 자체는 미리 볼 수 있음

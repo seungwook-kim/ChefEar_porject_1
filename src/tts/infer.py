@@ -24,9 +24,11 @@ waveform, sample_rate = tts_synthesize("약불로 5분간 끓여주세요")
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import numpy as np
 import torch
+from dotenv import load_dotenv
 
 from orchestration.db import load_env
 
@@ -34,7 +36,6 @@ from orchestration.db import load_env
 # 아래 MODEL_ID가 이 시점의 os.environ을 바로 읽으므로, HF_TOKEN을 쓰는 load_tts_model()보다
 # 먼저(모듈 import 시점에) 호출해야 한다.
 load_env()
-
 
 # ============================================================
 # 모델 설정
