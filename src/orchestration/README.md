@@ -37,10 +37,12 @@ Streamlit 세션(`st.session_state`)을 함수 인자로 받는 형태라 Stream
 pytest tests/ -k "not tts_cpu_inference"
 ```
 
-2026-08-17 재확인: 50/50 PASS. 다만 재료대체 매칭 실패 시 응답에 `match_type: "none"`이 들어가는지는
-어떤 pytest도 검증하지 않는다(`test_substitution.py`는 `apply_substitution()` 자체만 봄, 실제 발견은
-`tests/integration_test.md` 시나리오 C 수동 테스트에서 나왔다) — `main` 브랜치의 `pipeline.py`엔 이
-필드가 빠져 있어(`docs/decisions.md` 참고) 병합 시 회귀 위험이 있다.
+2026-08-18 재확인(main 브랜치): 50/50 PASS. `pipeline.py`의 `match_type: "none"` 필드는 main에
+이미 병합 완료됐고(`tests/integration_scenario_test.py` C-1로 실제 Supabase 연결 재확인, 31/31 PASS),
+main·seunguk 브랜치 `pipeline.py` diff 없음 — 병합 회귀 위험은 해소됐다. 다만 이 필드를 검증하는
+pytest는 여전히 없다(`test_substitution.py`는 `apply_substitution()` 자체만 봄, 실제 발견은
+`tests/integration_test.md` 시나리오 C 수동 테스트에서 나왔다) — 향후 다른 브랜치에서 이 필드가
+조용히 빠지는 걸 pytest로는 못 잡으므로 회귀 테스트 추가가 필요하다.
 
 ## 관련 문서
 
