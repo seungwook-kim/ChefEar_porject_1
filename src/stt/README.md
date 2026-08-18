@@ -181,6 +181,10 @@ TTS → STT 통합 테스트 스크립트는 `tests/tts_stt_roundtrip_test.py`�
 
 ## 현재 진행 / 남은 작업
 
+* TTS → STT 검증 통합 — `tests/tts_stt_roundtrip_test.py`로 2026-08-17 실행 완료(GPU 환경, `python tests/tts_stt_roundtrip_test.py`), 결과는 `results/tts/roundtrip_cer.csv`(지표를 WER에서 CER로 변경, 상세는 `../../tests/README.md`·`../tts/README.md` 참고). 5문장 평균 CER 1.37, 문장별 편차가 커서(0.00~5.84) 추가 원인 분석 필요
+* STT+TTS를 한 환경에 같이 설치할 때 `transformers` 버전 충돌(`4.46.3` vs `qwen-tts`가 요구하는 `4.57.3`)이 있었는데, `requirements-stt.txt`를 `4.57.3`으로 올려서 해결·검증함(`../../docs/decisions.md` 참고) — Whisper+PEFT+bitsandbytes 로딩은 최신 transformers에서도 문제없이 동작
+* 실제 통합환경에서 오류 유형 수집
+* `stt_transcribe()` 단일 발화 추론 함수 정리
 * V2 신규 음성 300개 생성 및 검수
 * `finetune_whisper.py` V2 추가 파인튜닝 코드 작성
 * 기존 `BEST_FINAL_mix750_replay_numeric` Adapter에서 V2 추가 파인튜닝

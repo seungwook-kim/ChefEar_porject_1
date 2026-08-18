@@ -24,11 +24,9 @@ waveform, sample_rate = tts_synthesize("약불로 5분간 끓여주세요")
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 import numpy as np
 import torch
-from dotenv import load_dotenv
 
 from orchestration.db import load_env
 
