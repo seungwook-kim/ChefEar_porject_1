@@ -43,7 +43,8 @@ wav2vec2는 ChefEar 요리 문장에서 숫자·단위·일부 한국어 음절 
 
 ## 현재 진행 / 남은 작업
 
-* TTS → STT 검증 통합 — 실행 스크립트가 `tests/tts_stt_roundtrip_test.py`로 이 저장소에 추가됨(GPU 환경에서 `python tests/tts_stt_roundtrip_test.py` 실행, 결과는 `results/tts/roundtrip_wer.csv`)
+* TTS → STT 검증 통합 — `tests/tts_stt_roundtrip_test.py`로 2026-08-17 실행 완료(GPU 환경, `python tests/tts_stt_roundtrip_test.py`), 결과는 `results/tts/roundtrip_cer.csv`(지표를 WER에서 CER로 변경, 상세는 `../../tests/README.md`·`../tts/README.md` 참고). 5문장 평균 CER 1.37, 문장별 편차가 커서(0.00~5.84) 추가 원인 분석 필요
+* STT+TTS를 한 환경에 같이 설치할 때 `transformers` 버전 충돌(`4.46.3` vs `qwen-tts`가 요구하는 `4.57.3`)이 있었는데, `requirements-stt.txt`를 `4.57.3`으로 올려서 해결·검증함(`../../docs/decisions.md` 참고) — Whisper+PEFT+bitsandbytes 로딩은 최신 transformers에서도 문제없이 동작
 * 실제 통합환경에서 오류 유형 수집
 * `stt_transcribe()` 단일 발화 추론 함수 정리
 * `src/orchestration/pipeline.py` 연결 확인
