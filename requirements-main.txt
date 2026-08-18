@@ -1,16 +1,31 @@
-# ChefEar env-main — 가이드 6.2 고정 버전표 기준 (임의로 바꾸지 말 것)
-# python3.12 -m venv env-main && source env-main/bin/activate
-# pip install -r requirements-main.txt --break-system-packages
+# ChefEar Integrated Environment
+# 권장 실행 환경: Python 3.12
+# Python 3.11.9에서도 STT/TTS 통합 및 패키지 호환성 확인 완료
+# PyTorch CUDA 12.4 별도 설치 권장:
+# python -m pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
 
-streamlit==1.61.1
-sentence-transformers==5.6.1
-faster-whisper==1.2.1
+transformers==4.57.3
+accelerate==1.12.0
+peft==0.20.0
+bitsandbytes==0.50.0
+tokenizers==0.22.2
+
+qwen-tts==0.1.1
+
+huggingface_hub==0.36.2
+python-dotenv==1.2.3
 jiwer==4.0.0
-supabase==2.31.0
-streamlit-cookies-manager==0.2.0
+soundfile==0.14.0
+librosa==0.11.0
+pandas==3.0.5
+numpy==2.4.6
+tqdm==4.70.0
+ipykernel==7.3.0
+psutil==7.2.2
 
-# STT 학습: transformers / peft / accelerate / bitsandbytes — 버전 재검증 필요(착수 후), docs/decisions.md 참고
-# TTS 학습: Qwen3-TTS 커뮤니티 LoRA 저장소 — 버전 미정, 비공식 실험적 저장소
-# TTS 추론: Qwen3-TTS 공식 저장소 기반 — 버전 미정
+# STT 학습/추론: transformers==4.57.3 / peft==0.20.0 / accelerate==1.12.0 / bitsandbytes==0.50.0 — 통합환경 검증 완료
+# TTS 학습/추론: qwen-tts==0.1.1 — STT/TTS 통합환경에서 검증 완료
+# TTS 모델: Qwen3-TTS 1.7B + KSS 기반 파인튜닝 모델
+# STT/TTS 모델 Repo 주소는 .env의 HF_STT_MODEL_REPO / HF_TTS_MODEL_REPO로 관리
 
 # 제외(사용 금지): groq, piper-tts
