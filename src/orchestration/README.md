@@ -37,6 +37,11 @@ Streamlit 세션(`st.session_state`)을 함수 인자로 받는 형태라 Stream
 pytest tests/ -k "not tts_cpu_inference"
 ```
 
+2026-08-17 재확인: 50/50 PASS. 다만 재료대체 매칭 실패 시 응답에 `match_type: "none"`이 들어가는지는
+어떤 pytest도 검증하지 않는다(`test_substitution.py`는 `apply_substitution()` 자체만 봄, 실제 발견은
+`tests/integration_test.md` 시나리오 C 수동 테스트에서 나왔다) — `main` 브랜치의 `pipeline.py`엔 이
+필드가 빠져 있어(`docs/decisions.md` 참고) 병합 시 회귀 위험이 있다.
+
 ## 관련 문서
 
 `docs/ChefEar_PRD_SDD_v0.8.md` 7.1~7.6(함수 목록), AC-01~13. 코드 자체 주석이 각 문서 절 번호를 인용하고 있어
