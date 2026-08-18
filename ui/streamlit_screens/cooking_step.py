@@ -27,13 +27,18 @@ def render() -> None:
 
     render_badge(f'{recipe["dish_name"]} · {step_number} / {total} 단계')
 
-    render_step_card(total, step_number, current["text"], current["minutes"])
+    render_step_card(total, step_number, current["text"])
 
     render_section_title("오늘의 재료")
     render_chips(recipe["ingredients"], substituted_name=st.session_state.get("substituted_ingredient"))
 
-    if st.session_state.chat_log:
-        render_chat(st.session_state.chat_log)
+    # 아직 대체 등 상호작용이 없었을 때도(예: 1단계 진입 직후) 오늘의 재료↔듣는 중 사이에
+    # 대화 구역이 항상 보이도록, 비어있으면 기본 예시 대화로 대체한다.
+    chat = st.session_state.chat_log or [
+        ("user", "감자 대신 양파 넣어도 돼?"),
+        ("ai", "네, 양파로 대체했어요."),
+    ]
+    render_chat(chat)
 
     render_mic_bar("듣는 중", '"다음" · "다시" · "재료 바꾸기"', listening=True)
 
@@ -62,21 +67,18 @@ def render() -> None:
     st.divider()
     st.caption("아래 버튼들은 재료 대체·예외 상황 화면으로 이어지는 데모용 예시 발화입니다.")
 
-    if recipe["id"] == "doenjang" and st.session_state.get("substituted_ingredient") != "감자":
-        if st.button("🎙️ “감자 대신 양파 넣어도 돼?” (같은 레시피 안에서 1:1 대체)", use_container_width=True):
-            for ing in recipe["ingredients"]:
-                if ing["name"] == "감자":
-                    ing["name"], ing["qty"], ing["emoji"] = "양파", "1/2개", "🧅"
-                    break
-            st.session_state.substituted_ingredient = "양파"
-            st.session_state.chat_log = [("user", "감자 대신 양파 넣어도 돼?"), ("ai", "네, 양파로 대체했어요.")]
-            goto("cooking_step")
+    with st.container(key="cs_demo_buttons"):
+        if recipe["id"] == "doenjang" and st.session_state.get("substituted_ingredient") != "양파":
+            if st.button('🎙️ "감자 대신 양파 넣어도 돼?" (같은 레시피 안에서 1:1 대체)'):
+                st.session_state.substituted_ingredient = "양파"
+                st.session_state.chat_log = [("user", "감자 대신 양파 넣어도 돼?"), ("ai", "네, 양파로 대체했어요.")]
+                goto("cooking_step")
 
-    if st.button("🎙️ “바지락 넣어도 돼?” (다른 레시피로 교체 제안 예시)", use_container_width=True):
-        goto("substitution_confirm")
+        if st.button("🎙️ “바지락 넣어도 돼?” (다른 레시피로 교체 제안 예시)"):
+            goto("substitution_confirm")
 
-    if st.button("🎙️ “문어랑 성게 같이 넣어도 돼?” (매칭 실패 예시)", use_container_width=True):
-        goto("no_match")
+        if st.button("🎙️ “문어랑 성게 같이 넣어도 돼?” (매칭 실패 예시)"):
+            goto("no_match")
 
-    if st.button("음성 인식 실패 Fallback 예시 보기", use_container_width=True):
-        goto("unclassified")
+        if st.button("음성 인식 실패 Fallback 예시 보기"):
+            goto("unclassified")
