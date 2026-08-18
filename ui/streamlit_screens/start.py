@@ -41,7 +41,9 @@ def render() -> None:
         unsafe_allow_html=True,
     )
 
-    render_big_mic()
+    audio = render_big_mic()
+    if audio is not None:
+        st.info("녹음을 받았어요. STT 연결은 아직 준비 중이라 실제 음성 인식은 안 돼요 (src/ui/README.md 참고).")
 
     for key, styled_html, accessible_label, recipe_key, utterance in HINT_CHIPS:
         with st.container(key=key):
