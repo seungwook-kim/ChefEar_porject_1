@@ -6,7 +6,7 @@
 |---|---|---|---|
 | `orchestration/` | 김승욱 | 완성 — `pipeline.py`에 `handle_utterance()`(STT→의도분류→라우팅) 포함 | [orchestration/README.md](orchestration/README.md) |
 | `stt/` | 하주성 | 모델 확정(whisper-large-v3-turbo) + 평가 완료. `infer.py`는 배치 평가용, 배포용 단일 발화 함수(`stt_transcribe()`, faster-whisper 변환)는 아직 정리 필요 | [stt/README.md](stt/README.md) |
-| `tts/` | 홍민하 | 파인튜닝 완료(HF Hub 업로드), `infer.py`에 `tts_synthesize()` 작성됨. 학습 재현 코드는 아직 이 저장소 밖에만 있음 | [tts/README.md](tts/README.md) |
+| `tts/` | 홍민하 | 파인튜닝 완료(HF Hub 업로드), `infer.py`에 `tts_synthesize()` 작성됨. ⚠️ 실측 결과 CPU 배포 속도 FAIL(목표 5초의 약 40배), roundtrip CER 편차 큼 — 대안/원인 분석 필요(2026-08-17) | [tts/README.md](tts/README.md) |
 | `ui/`(`src/ui/`) | 홍민하 | 정식 위치는 비어있음 — 대신 최상위 `ui/`(별도 폴더, mock 데이터 프로토타입)에 화면 11개 구현됨 | [ui/README.md](ui/README.md) |
 
 ## app.py (확인: 2026-08-16)
