@@ -8,9 +8,10 @@
 - `src/app.py`가 아직 비어있어서(홍민하 담당) **화면으로 눌러보는 통합테스트는 불가능**. 지금은
   `src/orchestration/pipeline.py`의 `handle_utterance()`를 Python에서 직접 호출해서 오케스트레이션
   레이어(의도분류→라우팅→DB)까지만 검증한다. `app.py`가 준비되면 아래 시나리오를 화면에서 그대로
-  다시 확인해야 한다.
-- TTS(`src/tts/infer.py`)가 아직 비어있어서(파인튜닝 진행 중) **AC-16(TTS 딥러닝 검증)은 지금 실행
-  불가** — 아래 해당 절에 결과 기록 자리만 만들어두고 TTS 준비되면 채운다.
+  다시 확인해야 한다. 아래 AC-14 실행은 `tests/integration_scenario_test.py`로 자동화해서 확인함.
+- TTS(`src/tts/infer.py`)는 이제 작성 완료됐지만(`tts_synthesize()`), **AC-16(TTS 딥러닝 검증)은
+  아직 실행 안 됨** — `tests/tts_stt_roundtrip_test.py`(GPU 필요)를 하주성/홍민하님이 실행해야 함,
+  결과 기록 자리만 만들어두고 나오는 대로 채운다.
 - STT는 배포 완료됐지만, 이 문서의 시나리오는 마이크 입력이 아니라 "STT가 이렇게 인식했다고 가정한
   텍스트"를 `handle_utterance()`에 직접 넣는 방식으로 진행한다(STT 인식 자체의 정확도는 이 문서의
   범위가 아니라 STT 자체 평가 스크립트의 몫).
@@ -53,26 +54,34 @@ session = {}
 
 | # | GIVEN | WHEN (발화/호출) | THEN (기대값) | 결과 |
 |---|---|---|---|---|
-| A-1 | 새 세션 | `handle_utterance(session, "된장찌개 어떻게 만들어?", dish_name="된장찌개")` | `intent == "조회"`, `session["current_recipe_id"]`가 채워짐, `session["step_number"] == 1` | [ ] PASS / [ ] FAIL |
-| A-2 | A-1 이후 (확인 단계는 위 "설계상 공백" 참고, 여기선 우회) | `get_current_step(session["current_recipe_id"], 1, client=client)` | 1단계 텍스트가 반환됨(`text` 키 존재, 빈 문자열 아님) | [ ] PASS / [ ] FAIL |
-| A-3 | A-1 이후 | `handle_utterance(session, "다음", client=client)` | `intent == "진행"`, `step_number == 2`, `step["text"]`가 1단계와 다른 문장 | [ ] PASS / [ ] FAIL |
-| A-4 | A-3 이후 | `handle_utterance(session, "다시", client=client)` | `intent == "재청취"`, `step_number`는 2 그대로 | [ ] PASS / [ ] FAIL |
-| A-5 | A-4 이후 | `handle_utterance(session, "이전", client=client)` | `intent == "이전"`, `step_number == 1` | [ ] PASS / [ ] FAIL |
-| A-6 | 처음부터 끝까지 | 마지막 step_number까지 "다음"을 반복 호출 | 중간에 예외 없이 마지막 단계까지 도달, 마지막 이후 "다음"을 눌러도 서비스가 죽지 않음(단, 범위 밖 step_number 동작은 7.1.1에 명시 없음 — 실측 후 팀 논의 필요) | [ ] PASS / [ ] FAIL |
+| A-1 | 새 세션 | `handle_utterance(session, "된장찌개 어떻게 만들어?", dish_name="된장찌개")` | `intent == "조회"`, `session["current_recipe_id"]`가 채워짐, `session["step_number"] == 1` | [O] PASS / [ ] FAIL |
+| A-2 | A-1 이후 (확인 단계는 위 "설계상 공백" 참고, 여기선 우회) | `get_current_step(session["current_recipe_id"], 1, client=client)` | 1단계 텍스트가 반환됨(`text` 키 존재, 빈 문자열 아님) | [O] PASS / [ ] FAIL |
+| A-3 | A-1 이후 | `handle_utterance(session, "다음", client=client)` | `intent == "진행"`, `step_number == 2`, `step["text"]`가 1단계와 다른 문장 | [O] PASS / [ ] FAIL |
+| A-4 | A-3 이후 | `handle_utterance(session, "다시", client=client)` | `intent == "재청취"`, `step_number`는 2 그대로 | [O] PASS / [ ] FAIL |
+| A-5 | A-4 이후 | `handle_utterance(session, "이전", client=client)` | `intent == "이전"`, `step_number == 1` | [O] PASS / [ ] FAIL |
+| A-6 | 처음부터 끝까지 | 마지막 step_number까지 "다음"을 반복 호출 | 중간에 예외 없이 마지막 단계까지 도달, 마지막 이후 "다음"을 눌러도 서비스가 죽지 않음(단, 범위 밖 step_number 동작은 7.1.1에 명시 없음 — 실측 후 팀 논의 필요) | [O] PASS / [ ] FAIL |
+
+실측 결과(된장찌개, 2026-08-16): 총 7단계, 예외 없이 끝까지 진행됨. 마지막 단계 이후 "다음"을 또
+누르면 `step`이 `None`으로 돌아올 뿐 예외는 안 남 — 위 THEN에 적힌 "범위 밖 step_number 동작 미명시"
+가 실측으로 확인됨(죽지는 않지만 `step: None`을 호출부(`app.py`)가 별도로 처리해야 함, 아직 미정리).
 
 ### 시나리오 B — 진행 중 재료 대체 (5장 시나리오 B)
 
 | # | GIVEN | WHEN | THEN | 결과 |
 |---|---|---|---|---|
-| B-1 | session의 `current_recipe_id`가 "된장찌개"(A-1 이어서, 또는 새로 조회) | `handle_utterance(session, "바지락 넣어도 돼?", requested_ingredient=["바지락"], client=client)` | `intent == "재료대체"`, `result_dish_name == "바지락된장찌개"`, `match_type == "exact_name"`, `session["current_recipe_id"]`가 바뀜 | [ ] PASS / [ ] FAIL |
-| B-2 | B-1 이후 | `handle_utterance(session, "다음", client=client)` | 대체된(바지락된장찌개) 레시피 기준으로 진행 계속(`step_number` 증가), 에러 없음 | [ ] PASS / [ ] FAIL |
-| B-3 | B-1 이후 | `handle_utterance(session, "취소해줘", client=client)` | `intent == "취소"`, `rolled_back == True`, `session["current_recipe_id"]`가 대체 이전(된장찌개)으로 복원 | [ ] PASS / [ ] FAIL |
+| B-1 | session의 `current_recipe_id`가 "된장찌개"(A-1 이어서, 또는 새로 조회) | `handle_utterance(session, "바지락 넣어도 돼?", requested_ingredient=["바지락"], client=client)` | `intent == "재료대체"`, `result_dish_name == "바지락된장찌개"`, `match_type == "exact_name"`, `session["current_recipe_id"]`가 바뀜 | [O] PASS / [ ] FAIL |
+| B-2 | B-1 이후 | `handle_utterance(session, "다음", client=client)` | 대체된(바지락된장찌개) 레시피 기준으로 진행 계속(`step_number` 증가), 에러 없음 | [O] PASS / [ ] FAIL |
+| B-3 | B-1 이후 | `handle_utterance(session, "취소해줘", client=client)` | `intent == "취소"`, `rolled_back == True`, `session["current_recipe_id"]`가 대체 이전(된장찌개)으로 복원 | [O] PASS / [ ] FAIL |
 
 ### 시나리오 C — 재료대체 매칭 완전 실패 시 정직한 안내 (5장 시나리오 C)
 
 | # | GIVEN | WHEN | THEN | 결과 |
 |---|---|---|---|---|
-| C-1 | session의 `current_recipe_id`가 된장찌개 | `handle_utterance(session, "문어랑 성게 같이 넣어도 돼?", requested_ingredient=["문어", "성게"], client=client)` | `intent == "재료대체"`, `match_type == "none"`, `message`에 "레시피는 없어요" 계열 문구(그럴싸하게 지어내지 않음, 1.5 원칙) | [ ] PASS / [ ] FAIL |
+| C-1 | session의 `current_recipe_id`가 된장찌개 | `handle_utterance(session, "문어랑 성게 같이 넣어도 돼?", requested_ingredient=["문어", "성게"], client=client)` | `intent == "재료대체"`, `match_type == "none"`, `message`에 "레시피는 없어요" 계열 문구(그럴싸하게 지어내지 않음, 1.5 원칙) | [O] PASS / [ ] FAIL |
+
+실측 중 발견: 원래 `pipeline.py`는 매칭 실패 시 `{"intent": ..., "message": ...}`만 리턴하고
+`match_type`을 빠뜨리고 있었음(성공 케이스만 포함) — 위 THEN 기대값과 다름을 이 시나리오로 실제
+발견해서 `handle_utterance()`를 수정함(match_type: "none" 추가, 2026-08-16). 수정 후 PASS.
 
 ### 시나리오 D — 표준 데이터 밖 요리 요청 시 신규 등록 유도 (5장 시나리오 D)
 
@@ -81,8 +90,8 @@ session = {}
 
 | # | GIVEN | WHEN | THEN | 결과 |
 |---|---|---|---|---|
-| D-1 | 새 세션, "은하수비빔밥"은 DB에 없음(확인됨) | `handle_utterance(session, "은하수비빔밥 어떻게 만들어?", dish_name="은하수비빔밥", client=client)` | `intent == "조회"`, `message == "죄송해요, 그 요리는 아직 없어요."`, `session`에 `current_recipe_id`가 새로 생기지 않음 | [ ] PASS / [ ] FAIL |
-| D-2 | D-1 이후, 신규 등록으로 유도 | `handle_utterance(session, "새 레시피 등록하고 싶어", registration_step="dish_name", registration_value="은하수비빔밥", client=client)` | `intent == "등록"`, `prompt`에 재료를 묻는 문구, `session["registration"]["dish_name"] == "은하수비빔밥"` | [ ] PASS / [ ] FAIL |
+| D-1 | 새 세션, "은하수비빔밥"은 DB에 없음(확인됨) | `handle_utterance(session, "은하수비빔밥 어떻게 만들어?", dish_name="은하수비빔밥", client=client)` | `intent == "조회"`, `message == "죄송해요, 그 요리는 아직 없어요."`, `session`에 `current_recipe_id`가 새로 생기지 않음 | [O] PASS / [ ] FAIL |
+| D-2 | D-1 이후, 신규 등록으로 유도 | `handle_utterance(session, "새 레시피 등록하고 싶어", registration_step="dish_name", registration_value="은하수비빔밥", client=client)` | `intent == "등록"`, `prompt`에 재료를 묻는 문구, `session["registration"]["dish_name"] == "은하수비빔밥"` | [O] PASS / [ ] FAIL |
 
 ---
 
@@ -100,12 +109,13 @@ session = {}
 
 | 반복 회차 | A-1 결과 일치 (Y/N) | B-1 결과 일치 (Y/N) |
 |---|---|---|
-| 1 | | |
-| 2 | | |
-| ... | | |
-| 10~20 | | |
+| 1~15 | (아래 참고) | (아래 참고) |
 
-**일치율**: A-1 ___ / ___회, B-1 ___ / ___회
+`tests/integration_scenario_test.py`의 `run_ac15()`가 회차별 기록 대신 15회 결과를 집합(set)으로
+모아 "전부 같은 값 하나로 수렴하는지"를 자동 확인하는 방식으로 실행함 — 개별 회차 로그는 남기지
+않아 위 표는 회차별 기입용으로 비워둠(필요하면 나중에 로그 추가해서 다시 채울 수 있음).
+
+**일치율**: A-1 15/15회 (전부 동일 `recipe_id`), B-1 15/15회 (전부 동일 `result_dish_name`="바지락된장찌개")
 
 ---
 
@@ -130,8 +140,8 @@ session = {}
 
 | AC | 상태 |
 |---|---|
-| AC-14 (핵심 시나리오 완주) | [ ] 전체 PASS / [ ] 일부 FAIL(사유: ) / [ ] 미실행 |
-| AC-15 (반복 질의 일관성) | [ ] 전체 PASS / [ ] 일부 FAIL(사유: ) / [ ] 미실행 |
-| AC-16 (TTS 딥러닝 검증) | [ ] 블로킹(TTS 학습 대기) |
+| AC-14 (핵심 시나리오 완주) | [O] 전체 PASS / [ ] 일부 FAIL(사유: ) / [ ] 미실행 |
+| AC-15 (반복 질의 일관성) | [O] 전체 PASS / [ ] 일부 FAIL(사유: ) / [ ] 미실행 |
+| AC-16 (TTS 딥러닝 검증) | [O] 블로킹(TTS 파인튜닝은 완료, `tests/tts_stt_roundtrip_test.py` 실행 대기 — GPU 필요) |
 
-**실행일**: ____________ **실행자**: ____________
+**실행일**: 2026-08-16 **실행자**: 김승욱 (`tests/integration_scenario_test.py`로 자동 실행, 31/31 PASS)
