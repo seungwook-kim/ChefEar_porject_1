@@ -14,8 +14,8 @@
 `src/app.py`는 HF Spaces 배포 엔트리포인트인데 **현재 완전히 비어있음(0줄)**. Streamlit 앱 자체가
 아직 시작되지 않은 상태. 팀 가이드(`docs/ChefEar_팀_진행_가이드_v2.md` 2장)에 따르면:
 
-- 루트 `README.md`에 아직 YAML frontmatter(`sdk: streamlit`, `app_file: src/app.py`)가 없음 —
-  HF Spaces 배포 전에 반드시 추가해야 함
+- 루트 `README.md`엔 YAML frontmatter(`sdk: streamlit`, `app_file: src/app.py`)가 이미 추가돼
+  있음(2026-08-18 재확인) — HF Spaces 배포 메타데이터 쪽은 준비 완료
 - `app.py`가 하는 일: 마이크 입력 → STT → `orchestration.pipeline` 라우팅 → TTS 응답 재생을
   한 화면 루프로 엮는 것. 화면 자체는 최상위 `ui/`(프로토타입, mock 데이터)의 구조를 그대로
   가져다 쓰면 됨 — `../../ui/README.md` 참고
