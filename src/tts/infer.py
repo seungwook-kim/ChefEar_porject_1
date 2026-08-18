@@ -30,8 +30,12 @@ import numpy as np
 import torch
 from dotenv import load_dotenv
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-load_dotenv(PROJECT_ROOT / ".env")
+from orchestration.db import load_env
+
+# db.py의 get_client()와 동일한 방식 — python-dotenv 없이 .env를 os.environ에 채워 넣는다.
+# 아래 MODEL_ID가 이 시점의 os.environ을 바로 읽으므로, HF_TOKEN을 쓰는 load_tts_model()보다
+# 먼저(모듈 import 시점에) 호출해야 한다.
+load_env()
 
 # ============================================================
 # 모델 설정
@@ -121,11 +125,20 @@ def load_tts_model():
 # 런타임 음성 합성
 # ============================================================
 
+# qwen_tts 기본값은 max_new_tokens=2048(라이브러리 하드 디폴트) — do_sample=True(확률적
+# 샘플링)와 같이 쓰이다 보니, 운이 나쁘면(멈춤 토큰을 늦게 뽑으면) 짧은 문장도 최대치까지
+# 생성을 계속해서 실측상 20배 이상 느려지는 경우가 있었다(2026-08-17 확인). ChefEar는 조리
+# 안내 한 문장(몇 초 분량)만 읽으면 되므로 훨씬 낮게 잡아도 충분하다 — 여유를 넉넉히 둬도
+# 원래 최대치의 1/3도 안 됨.
+DEFAULT_MAX_NEW_TOKENS = 600
+
+
 def tts_synthesize(
     text: str,
     *,
     language: str = "Korean",
     instruct: str = "",
+    max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS,
 ) -> tuple[np.ndarray, int]:
     """조리 안내 문장 하나 -> (waveform, sample_rate).
 
@@ -145,6 +158,8 @@ def tts_synthesize(
         speaker=SPEAKER,
 
         instruct=instruct,
+
+        max_new_tokens=max_new_tokens,
     )
 
     return wavs[0], sample_rate

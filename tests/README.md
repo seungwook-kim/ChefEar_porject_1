@@ -22,8 +22,8 @@
 | `test_identity.py` | 완성 | 쿠키 UUID(작업3) |
 | `test_mock_client.py` | 완성 | `db.get_client()` mock 자동 폴백 확인 |
 | `integration_test.md` | **작성 완료(137줄)** | AC-14~16(GWT) 기준 **수동** 시나리오 체크리스트(시나리오 A~D + AC-15 반복테스트 + AC-16 자리) — `handle_utterance()`를 파이썬에서 직접 호출하는 방식, `app.py`가 없어도 지금 바로 실행 가능. AC-16(TTS)만 아직 블로킹 표시 |
-| `tts_cpu_inference_test.py` | 버그 2개 수정 후 Colab(2 vCPU)에서 정식 실행 완료(2026-08-17) | Qwen3-TTS CPU 추론 속도 실측(HF Spaces CPU Basic 2 vCPU 흉내), 5초 목표 PASS/FAIL 판정. `qwen_tts` 패키지 필요. **결과: 3문장 전부 FAIL, 전체 평균 197.48초(목표의 약 39.5배)** — CSV는 `cpu_inference_test_20260816_164450.csv`, 상세는 `../src/tts/README.md` "CPU 속도 실측 결과" 참고 |
-| `tts_stt_roundtrip_test.py` | 작성됨(신규) | `src/tts/infer.py`로 합성 → `src/stt/infer.py`로 재인식 → WER 계산(AC-16 관련). **GPU 필요**(STT의 4bit 로딩이 CUDA 전용) + private TTS repo라 `HF_TOKEN` 필요 |
+| `integration_scenario_test.py` | 작성됨(신규) | 위 `integration_test.md`의 시나리오 A~D + AC-15를 코드로 그대로 옮겨 순차 실행하는 진단 스크립트. 실제 DB 연결(`allow_mock=False`) 필요, GPU 불필요. 실행 결과(PASS/FAIL)를 보고 `integration_test.md` 체크박스를 채우는 용도 — pytest 아님, assert로 죽지 않고 끝까지 돌고 마지막에 요약 출력 |
+| `tts_cpu_inference_test.py` | 작성됨(신규, untracked) | Qwen3-TTS CPU 추론 속도 실측(HF Spaces CPU Basic 2 vCPU 흉내), 5초 목표 PASS/FAIL 판정. `qwen_tts` 패키지 필요 |
 
 ## 진행 방법
 
