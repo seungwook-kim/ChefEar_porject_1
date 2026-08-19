@@ -45,5 +45,6 @@ build/
 
 #test 배포 절대 하지 말 것
 result_test/*
+tests/test-audio/*
 result_test_backup_ep13_working/*
 *.gitignore

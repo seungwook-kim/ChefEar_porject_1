@@ -13,6 +13,7 @@ Qwen3-TTS-12Hz-1.7B(VoiceDesign)를 KSS 데이터셋으로 파인튜닝하고, H
 | `finetune_qwen3tts.py` | **비어있음(0줄)** | Qwen3-TTS QLoRA 파인튜닝 — 마찬가지로 `test/scripts/train_qwen3_tts.py`에서 이미 진행됨(체크포인트 이력은 아래 참고), 이 정식 위치로는 아직 이식 안 됨 |
 | `infer.py` | **완성, 13에포크 체크포인트 + voice-clone 방식으로 전면 교체(2026-08-19), max_new_tokens/시드 튜닝 완료(2026-08-19)** | `tts_synthesize(text) -> (waveform, sample_rate)`. 로드한 체크포인트의 `tts_model_type`을 보고 자동 분기: `"base"`(현재 기준 체크포인트)면 `assets/kss_reference.wav`로 목소리를 복제하는 `generate_voice_clone()`, `"custom_voice"`(과거 체크포인트로 되돌아갈 경우 대비)면 화자명 `SPEAKER="kss_speaker"`로 `generate_custom_voice()`. GPU 있으면 cuda/bfloat16, 없으면 CPU/float32로 자동 분기. `max_new_tokens` 기본값 **250**(600→170→180→190→195→200→300 순으로 실측 후 195로 확정했다가, **팀원 요청으로 195에서도 잘리는 게 확인돼 250으로 재조정(2026-08-19)**, 아래 실측 결과 ③ 참고). 매 합성 직전 `torch.manual_seed(42)`로 시드 고정(재현성 확보 — 이전엔 `do_sample=True`인데 시드 고정이 전혀 없어 같은 문장도 호출마다 결과가 달랐음) |
 | `assets/kss_reference.wav` | **신규 추가(2026-08-19)** | voice-clone 레퍼런스 음성. KSS 원본 000008번(`나는 살아오면서 감기를 앓은 적이 한 번도 없다`) — `data/kss/metadata.csv`와 대본 페어 확인됨. Qwen 공식 데모의 영어 샘플 대신 실제 KSS 화자 목소리를 쓰려고 이걸로 골랐다 |
+| `pronunciation.py` | **신규 추가(2026-08-19)** | `apply_pronunciation_fixes(text)` — 겹받침 연음을 모델이 잘못 읽는 것으로 확인된 단어만 정규식으로 직접 치환("닭을"→"달글"). `tts_synthesize()`가 TTS로 넘기는 사본에만 적용하고 화면/로그/DB용 원문은 안 건드림. 아래 "③ 발음 보정" 참고 |
 
 ## 체크포인트 이력 — epoch-8 → epoch-24(품질 저하) → 13에포크(현재, known-good)
 
@@ -32,7 +33,10 @@ HF Hub `kimseunguk/qwen3-tts-kss-finetuned`(private)에 업로드. 학습 코드
 3. **13에포크 체크포인트**(현재, 2026-08-19) — epoch-24의 과적합 의심으로 더 이전 에포크로
    되돌렸고, 동시에 `tts_model_type`이 `"base"`로 바뀌어 있어(화자 임베딩 테이블 없음) 코드를
    voice-clone 방식으로 전환. 아래 실측 결과 참고. 로컬 known-good 백업은
-   `result_test_backup_ep13_working/`(git 미추적, 4.3GB) — 이후 다른 에포크와 비교할 때 기준으로 삼을 것
+   `result_test_backup_ep13_working/`(git 미추적, 4.3GB) — 이후 다른 에포크와 비교할 때 기준으로 삼을 것.
+   같은 날 HF Hub 리포(`kimseunguk/qwen3-tts-kss-finetuned`)의 기존 파일을 전부 지우고 이
+   백업 폴더 내용으로 단일 커밋 전체 교체함(`upload_folder(delete_patterns="*")`, 커밋
+   `6d893034`) — 이전 커밋 히스토리는 남아있어 필요하면 되돌릴 수 있음
 
 ## 실측 결과
 
@@ -57,13 +61,33 @@ HF Hub `kimseunguk/qwen3-tts-kss-finetuned`(private)에 업로드. 학습 코드
 `tests/integration_issues_2026-08-18.md`에 기록된 🔴 #1(화자명 불일치)·#2(품질 저하) 이슈는 이
 체크포인트/코드 전환으로 **해소됨**. `AC-16`(TTS 딥러닝 검증)에 이 수치를 쓸 수 있다.
 
-**② CPU 속도 — 미재측정, 이전 수치(FAIL) 그대로 참고만 할 것**
+**② CPU/GPU 속도 — 13에포크+voice-clone 경로로 재측정 완료(2026-08-19), CPU는 여전히 FAIL**
 
-`tests/tts_cpu_inference_test.py`(Colab 2 vCPU) 마지막 실측은 2026-08-17, epoch-8·
-`generate_custom_voice()` 경로 기준으로 3문장 평균 197.48초(목표 5초의 약 39.5배 FAIL).
-CSV: `results/tts/cpu_inference_test_20260816_164450.csv`. **13에포크 + voice-clone 경로는 코드
-경로 자체가 다르므로(레퍼런스 오디오 인코딩 단계 추가 등) 이 수치를 그대로 믿을 수 없다** — 재측정
-전까지는 "속도 문제가 여전히 있을 가능성이 높다" 정도로만 취급할 것.
+`tests/tts_cpu_inference_test.py`(13에포크+voice-clone 경로로 갱신된 공식 스크립트)로 재측정:
+
+- **CPU**: 4문장 기준 전체 평균 **26.11초**(목표 5초 FAIL) — 구 code path(197.48초) 대비 대폭 개선은
+  됐지만 여전히 목표 미달. CSV: `results/tts/cpu_inference_test.csv`
+- **GPU(RTX 5070) 참고치**: 같은 스크립트를 CPU 강제 없이 GPU로 실행하며 단계적으로 최적화 —
+  eager 6.34초 → `attn_implementation="sdpa"`(PyTorch 내장 fused attention, 별도 설치 불필요)
+  5.48초 → `torch.compile(dynamic=True)` 추가 5.21초. `flash-attn`은 이 환경(WSL, torch
+  2.13+cu130, RTX 5070 Blackwell `sm_120`)에서 **설치 불가 재확인**(nvcc 없어 소스 빌드도 불가,
+  두 번 실측). CSV: `results/tts/gpu_inference_test_20260819.csv`
+- ⚠️ `SENTENCES`/`MAX_NEW_TOKENS`는 이후로도 팀에서 계속 실험적으로 바뀌고 있어(문장 추가/삭제,
+  197→250 등) 위 수치는 특정 시점의 스냅샷이다 — 최신 수치는 CSV와 `docs/decisions.md`를 볼 것.
+  `MAX_NEW_TOKENS`를 문장 길이 대비 너무 낮게 잡으면 긴 문장이 도중에 잘리는 걸 실측으로 확인함
+  (98자 문장에서 197은 8회 중 5회 잘림, 250이면 여유 있음) — 문장을 늘릴 땐 상한도 같이 검토할 것
+
+**③ 발음 보정 — "닭을" 겹받침 연음 오발음 패치(2026-08-19)**
+
+"닭을 손질하세요"의 "닭을"(ㄺ 겹받침 연음, 정확한 발음은 "달글")이 이 체크포인트에서 이상하게
+발음되는 걸 청취로 확인. 한국어 G2P 라이브러리(`g2pk`, `g2pk3`)로 문장 전체를 일반화해서 고치는
+것도 시도했으나, "소금을 넣고"→"소그믈 러코"처럼 "~을/를 넣고" 같은 흔한 조리 표현에서 단어
+경계를 잘못 넘나드는 버그가 두 라이브러리 모두에 있어(콤마를 끼워 넣으면 버그가 사라지긴 하나
+원본 레시피 텍스트에 콤마 위치를 통제할 수 없어 근본 해결 아님) 채택하지 않았다. 대신
+`pronunciation.py`에 실제로 문제 확인된 단어만 정규식으로 직접 치환하는 방식을 도입 —
+범용성은 낮지만 문장의 나머지 부분을 안 건드리므로 G2P 라이브러리의 교차-단어 버그에 노출되지
+않는다. 새 단어에서 같은 문제가 발견되면 `pronunciation.py`의 딕셔너리에 추가하면 된다.
+회귀테스트: `tests/test_tts_pronunciation.py`(torch 불필요, 빠른 pytest 스위트에 포함됨).
 
 **③ `max_new_tokens` 튜닝(2026-08-19) — 600 → 170 → 180 → 190 → 195 → 200 → 300, 최종 250(팀원 요청)**
 
@@ -93,8 +117,10 @@ qwen_tts 라이브러리 기본값(2048)은 `do_sample=True`와 같이 쓰이면
 1. ~~`data/kss/` 24kHz 리샘플링~~ → 완료(`test/` 쪽에서)
 2. ~~QLoRA 파인튜닝~~ → 완료(체크포인트 이력은 위 참고)
 3. ~~TTS→STT roundtrip 품질 검증~~ → 완료, **PASS**(13에포크 기준 CER 0.00, 위 실측 결과 ① 참고)
-4. **CPU 5초 목표 재측정** — 13에포크 + voice-clone 경로 기준으로 다시 돌려야 함(위 실측 결과 ②),
-   그 결과에 따라 대안 결정: ① Modal 등 GPU 플랫폼 ② 데스크탑을 Tailscale로 상시 노출 ③ Qwen3-TTS 0.6B로 축소
+4. ~~CPU 5초 목표 재측정~~ → 완료(위 실측 결과 ②) — **CPU는 여전히 FAIL**(26.11초), GPU는
+   SDPA+`torch.compile`로 5.21초까지 근접했으나 목표 미달. 대안 결정 필요: ① Modal 등 GPU
+   플랫폼(SDPA+compile 적용해도 부족할 수 있음) ② 데스크탑을 Tailscale로 상시 노출 ③ Qwen3-TTS
+   0.6B로 축소 ④ 길이 버킷팅
 5. `prepare_data.py`/`finetune_qwen3tts.py`를 `test/scripts/`의 대응 코드로 채워서 이 저장소 안에서도
    재현 가능하게 이식(팀 문서상 정식 위치이므로 언젠가 필요)
 6. `infer.py`의 `tts_synthesize()`를 `src/orchestration/pipeline.py`/`src/app.py`에 연결
@@ -110,8 +136,10 @@ qwen_tts 라이브러리 기본값(2048)은 `do_sample=True`와 같이 쓰이면
 
 ## 필요한 것 / 막힌 것
 
-- **CPU 배포 속도 재측정 필요** — 13에포크 + voice-clone 경로 기준 수치가 아직 없음(위 실측 결과 ②),
-  결과에 따라 대안 결정까지 팀 논의 필요
+- **CPU 배포 속도 목표(5초) 여전히 미달** — 재측정 완료(위 실측 결과 ②, CPU 26.11초/GPU
+  SDPA+compile 5.21초), 대안 결정까지 팀 논의 필요
+- 겹받침 연음처럼 `pronunciation.py`가 아직 커버 못 하는 단어가 실사용 중 더 나올 수 있음 —
+  발견되면 딕셔너리에 추가(위 실측 결과 ③)
 - `qwen_tts`·`python-dotenv` 패키지가 `requirements.txt`/`requirements-main.txt`엔 아직 없음(버전은
   실측 검증됨) — private repo라 배포 시 `HF_TOKEN`을 HF Spaces Repository secret으로 등록도 필요
 - `prepare_data.py`/`finetune_qwen3tts.py` 이식 — 지금은 재현 코드가 이 저장소 밖에만 있음

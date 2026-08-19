@@ -40,6 +40,7 @@ import os
 import re
 
 import librosa
+import numpy as np
 import pandas as pd
 import torch
 
@@ -51,6 +52,16 @@ from transformers import (
     WhisperProcessor,
 )
 
+from orchestration.db import load_env
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+# python-dotenv는 requirements-stt.txt(학습 전용)에만 있고 배포용 requirements.txt에는
+# 없다 — src/tts/infer.py와 동일하게 orchestration.db.load_env()를 재사용해서 새 의존성
+# 없이 .env를 읽는다(2026-08-19, tests/integration_issues_2026-08-18.md 이슈 #3 수정). 이
+# import가 성립하려면 호출부가 미리 sys.path에 "src"를 넣어둬야 한다(tts/infer.py와 동일한
+# 전제 — tests/conftest.py, tests/tts_stt_roundtrip_test.py가 이미 그렇게 하고 있음).
+load_env()
 
 # ============================================================
 # 모델 설정
@@ -657,6 +668,97 @@ def _transcribe_audio(
 
 
 # ============================================================
+# 배포용 단일 발화 추론 (faster-whisper, CPU) — docs/specs/stt_deploy.md
+# ============================================================
+#
+# 위 load_stt_model()/_transcribe_audio()는 4bit(NF4) 양자화라 CUDA 전용이라(GPU 없는
+# HF Spaces CPU Basic에서 로드 자체가 안 됨), 배포는 별도로 faster-whisper(int8, CPU)를 쓴다.
+# faster-whisper는 HF transformers 체크포인트를 직접 못 읽어서, 먼저 src/stt/export_ct2.py로
+# (LoRA 병합 → CTranslate2 int8 변환) 오프라인 변환해둔 결과물을 읽는다.
+
+# 변환 결과물 우선순위: 1) 로컬 models/stt_finetuned/ct2_int8/(export_ct2.py 산출물)
+# 2) .env의 HF_STT_CT2_REPO(HF Hub에 올린 변환본 — 아직 업로드 여부 미정, Open Issue)
+CT2_LOCAL_DIR = PROJECT_ROOT / "models" / "stt_finetuned" / "ct2_int8"
+HF_STT_CT2_REPO = os.environ.get("HF_STT_CT2_REPO")
+
+_ct2_model = None
+
+
+def _resolve_ct2_model_path() -> str:
+    """CTranslate2 변환 모델의 경로/repo를 우선순위대로 결정한다.
+
+    로컬에도 없고 HF_STT_CT2_REPO도 없으면, 조용히 다른 모델로 폴백하지 않고 바로
+    에러를 던진다(EC-04, docs/specs/stt_deploy.md) — 잘못된 모델로 응답하는 게 더 위험하다.
+    """
+    if CT2_LOCAL_DIR.exists():
+        return str(CT2_LOCAL_DIR)
+    if HF_STT_CT2_REPO:
+        return HF_STT_CT2_REPO
+    raise FileNotFoundError(
+        f"CTranslate2 변환 모델을 찾을 수 없음 — {CT2_LOCAL_DIR}도 없고 .env의 "
+        "HF_STT_CT2_REPO도 안 설정됨. 먼저 `python src/stt/export_ct2.py`를 실행해서 "
+        "변환본을 만들 것(docs/specs/stt_deploy.md 참고)."
+    )
+
+
+def load_ct2_model():
+    """faster-whisper 모델을 최초 1번만 로드하고 이후 재사용한다."""
+
+    global _ct2_model
+
+    if _ct2_model is not None:
+        return _ct2_model
+
+    from faster_whisper import WhisperModel
+
+    model_path = _resolve_ct2_model_path()
+
+    # HF Spaces CPU Basic(2 vCPU)을 흉내낸 조건 — tests/tts_cpu_inference_test.py와 동일.
+    _ct2_model = WhisperModel(model_path, device="cpu", compute_type="int8", cpu_threads=2)
+
+    print(f"✅ ChefEar STT(faster-whisper, int8) 로드 완료: {model_path}")
+
+    return _ct2_model
+
+
+def stt_transcribe(audio: "str | Path | np.ndarray", *, sample_rate: int | None = None) -> str:
+    """오디오 하나 -> 인식된 텍스트. faster-whisper(int8, CPU) 기반, HF Spaces 배포용.
+
+    app.py가 직접 호출할 곳 — orchestration.pipeline.handle_utterance()에 반환값을
+    그대로 넘기면 된다.
+
+    Parameters
+    ----------
+    audio
+        파일 경로(mp3/wav 등) 또는 numpy 파형 배열. 배열로 줄 경우 sample_rate가 필수이며,
+        16kHz가 아니면 librosa로 16kHz 모노로 리샘플링한 뒤 넘긴다(EC-03).
+
+    Returns
+    -------
+    str
+        인식된 텍스트. 무음/너무 짧은 오디오 등으로 인식된 구간이 없으면 빈 문자열을
+        반환한다(예외 아님, EC-01) — 호출부(app.py)가 "다시 말씀해주세요"로 안내할 수 있게.
+    """
+
+    model = load_ct2_model()
+
+    if isinstance(audio, np.ndarray):
+        if sample_rate is None:
+            raise ValueError("audio가 numpy 배열이면 sample_rate가 필수임")
+        if sample_rate != 16000:
+            audio = librosa.resample(audio, orig_sr=sample_rate, target_sr=16000)
+
+    # vad_filter=True: 무음 구간을 걸러내서, 순수 무음 입력에서 whisper 특유의 환각
+    # (silence hallucination) 없이 자연스럽게 빈 결과가 나오게 한다(EC-01).
+    segments, _info = model.transcribe(audio, language="ko", vad_filter=True)
+
+    text = " ".join(segment.text.strip() for segment in segments).strip()
+
+    return text
+
+
+# ============================================================
+# 100개 음성 일괄 테스트
 # 서비스 파이프라인용 STT 함수
 # ============================================================
 

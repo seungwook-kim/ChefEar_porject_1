@@ -27,7 +27,7 @@ def render() -> None:
 
     render_badge(f'{recipe["dish_name"]} · {step_number} / {total} 단계')
 
-    render_step_card(total, step_number, current["text"])
+    render_step_card(total, step_number, current["text"], current.get("minutes"))
 
     render_section_title("오늘의 재료")
     render_chips(recipe["ingredients"], substituted_name=st.session_state.get("substituted_ingredient"))
