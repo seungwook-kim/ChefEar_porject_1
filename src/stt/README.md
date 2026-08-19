@@ -18,6 +18,15 @@ Whisper Small, wav2vec2 비교 실험을 거쳐 Whisper Large-v3-turbo를 최종
 
 `infer.py`는 최종 Adapter 로딩 및 STT 추론에 사용하며, 2026-08-17 기준 `.env` 기반 모델 경로 로딩 방식으로 수정했습니다.
 
+**2026-08-19 추가**: `infer.py`가 배포 환경(`requirements.txt`)에 없는 `python-dotenv` 대신
+`orchestration.db.load_env()`로 `.env`를 읽도록 바뀌었습니다(`src/tts/infer.py`와 동일한 방식,
+아래 "환경변수 적용" 절의 `load_dotenv` 설명은 이 변경 전 기준이라 참고만 할 것). 또한
+**배포용 단일 발화 함수 `stt_transcribe(audio) -> str`이 신규 추가**됐습니다 — 기존 `_transcribe_audio()`는
+배치 평가 내부용이라 그대로 못 쓰고, 배포 환경(HF Spaces CPU Basic, GPU 없음)에 맞춰
+4bit 양자화 대신 faster-whisper(int8, CPU)를 씁니다. faster-whisper는 HF transformers
+체크포인트를 직접 못 읽어서, 먼저 `export_ct2.py`(신규, 오프라인 1회 실행 스크립트)로
+LoRA merge → CTranslate2 int8 변환을 해둬야 합니다. 상세: `docs/specs/stt_deploy.md`.
+
 ## 현재 STT 모델
 
 Base Model은 `openai/whisper-large-v3-turbo`를 사용합니다.

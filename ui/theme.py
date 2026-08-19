@@ -339,7 +339,7 @@ def render_player() -> None:
     st.markdown(_player_html(), unsafe_allow_html=True)
 
 
-def render_step_card(total: int, current_step: int, step_text: str, minutes: int) -> None:
+def render_step_card(total: int, current_step: int, step_text: str, minutes: int | None) -> None:
     """조리 화면의 .ce-card(점 표시 + 단계 텍스트 + 소요시간 + 재생 파형) 전체를 통째로 그린다.
 
     st.markdown()은 호출마다 완전히 분리된 HTML 조각으로 렌더링돼서, 카드를 열고
@@ -348,11 +348,12 @@ def render_step_card(total: int, current_step: int, step_text: str, minutes: int
     발생해서 빈 흰색 알약 모양 박스로 보였다). 그래서 카드 내용 전체를 반드시 하나의
     st.markdown 호출로 합쳐서 그린다.
     """
+    time_html = f'<div class="ce-time">{ICON_CLOCK} 약 {minutes}분</div>' if minutes is not None else ""
     st.markdown(
         '<div class="ce-card">'
         + _dots_html(total, current_step)
         + f'<p class="ce-step-title">{step_text}</p>'
-        + f'<div class="ce-time">{ICON_CLOCK} 약 {minutes}분</div>'
+        + time_html
         + _player_html()
         + "</div>",
         unsafe_allow_html=True,
