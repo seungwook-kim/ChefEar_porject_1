@@ -51,6 +51,7 @@ load_env()
 # .env의 HF_TTS_MODEL_REPO로 덮어쓸 수 있게 하되(.env.example.local 참고), 기본값은 확정된 모델로 고정.
 MODEL_ID = os.environ.get("HF_TTS_MODEL_REPO") or "kimseunguk/qwen3-tts-kss-finetuned"
 
+
 # custom_voice 타입 체크포인트로 되돌아갈 경우를 대비한 화자명("kss_speaker_a100"이 아니라
 # "kss_speaker"로 심어져 있었음, 2026-08-18 실측 확인).
 SPEAKER = "kss_speaker"
@@ -59,6 +60,7 @@ SPEAKER = "kss_speaker"
 _ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 VOICE_CLONE_REF_AUDIO = str(_ASSETS_DIR / "kss_reference.wav")
 VOICE_CLONE_REF_TEXT = "나는 살아오면서 감기를 앓은 적이 한 번도 없다."  # data/kss/metadata.csv 000008
+
 
 
 # 모델은 최초 1번만 로드하고 이후 호출에서 재사용
@@ -133,7 +135,7 @@ def load_tts_model():
     )
 
 
-    print(f"✅ ChefEar TTS 모델 로드 완료: {MODEL_ID} (device={device_map}, attn={attn_impl})")
+    print(f"[TTS] 모델 로드 완료: {MODEL_ID} (device={device_map}, attn={attn_impl})")
 
 
     return _model
