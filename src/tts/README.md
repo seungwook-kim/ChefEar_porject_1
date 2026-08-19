@@ -11,7 +11,7 @@ Qwen3-TTS-12Hz-1.7B(VoiceDesign)를 KSS 데이터셋으로 파인튜닝하고, H
 |---|---|---|
 | `prepare_data.py` | **비어있음(0줄)** | KSS 24kHz 리샘플링 — 실제로는 별도 개인 작업 공간(`test/scripts/prepare_qwen3_tts_data.py`)에서 이미 진행됨, 이 정식 위치로는 아직 이식 안 됨 |
 | `finetune_qwen3tts.py` | **비어있음(0줄)** | Qwen3-TTS QLoRA 파인튜닝 — 마찬가지로 `test/scripts/train_qwen3_tts.py`에서 이미 진행됨(체크포인트 이력은 아래 참고), 이 정식 위치로는 아직 이식 안 됨 |
-| `infer.py` | **완성, 13에포크 체크포인트 + voice-clone 방식으로 전면 교체(2026-08-19), max_new_tokens/시드 튜닝 완료(2026-08-19)** | `tts_synthesize(text) -> (waveform, sample_rate)`. 로드한 체크포인트의 `tts_model_type`을 보고 자동 분기: `"base"`(현재 기준 체크포인트)면 `assets/kss_reference.wav`로 목소리를 복제하는 `generate_voice_clone()`, `"custom_voice"`(과거 체크포인트로 되돌아갈 경우 대비)면 화자명 `SPEAKER="kss_speaker"`로 `generate_custom_voice()`. GPU 있으면 cuda/bfloat16, 없으면 CPU/float32로 자동 분기. `max_new_tokens` 기본값 **195**(600→170→180→190→195→200→300 순으로 실측, **195로 확정(팀 결정)**, 아래 실측 결과 ③ 참고 — 이 값은 특히 긴 문장(재료 분수 표현 다수)에서 잘릴 수 있음을 감수한 선택). 매 합성 직전 `torch.manual_seed(42)`로 시드 고정(재현성 확보 — 이전엔 `do_sample=True`인데 시드 고정이 전혀 없어 같은 문장도 호출마다 결과가 달랐음) |
+| `infer.py` | **완성, 13에포크 체크포인트 + voice-clone 방식으로 전면 교체(2026-08-19), max_new_tokens/시드 튜닝 완료(2026-08-19)** | `tts_synthesize(text) -> (waveform, sample_rate)`. 로드한 체크포인트의 `tts_model_type`을 보고 자동 분기: `"base"`(현재 기준 체크포인트)면 `assets/kss_reference.wav`로 목소리를 복제하는 `generate_voice_clone()`, `"custom_voice"`(과거 체크포인트로 되돌아갈 경우 대비)면 화자명 `SPEAKER="kss_speaker"`로 `generate_custom_voice()`. GPU 있으면 cuda/bfloat16, 없으면 CPU/float32로 자동 분기. `max_new_tokens` 기본값 **250**(600→170→180→190→195→200→300 순으로 실측 후 195로 확정했다가, **팀원 요청으로 195에서도 잘리는 게 확인돼 250으로 재조정(2026-08-19)**, 아래 실측 결과 ③ 참고). 매 합성 직전 `torch.manual_seed(42)`로 시드 고정(재현성 확보 — 이전엔 `do_sample=True`인데 시드 고정이 전혀 없어 같은 문장도 호출마다 결과가 달랐음) |
 | `assets/kss_reference.wav` | **신규 추가(2026-08-19)** | voice-clone 레퍼런스 음성. KSS 원본 000008번(`나는 살아오면서 감기를 앓은 적이 한 번도 없다`) — `data/kss/metadata.csv`와 대본 페어 확인됨. Qwen 공식 데모의 영어 샘플 대신 실제 KSS 화자 목소리를 쓰려고 이걸로 골랐다 |
 
 ## 체크포인트 이력 — epoch-8 → epoch-24(품질 저하) → 13에포크(현재, known-good)
@@ -65,7 +65,7 @@ CSV: `results/tts/cpu_inference_test_20260816_164450.csv`. **13에포크 + voice
 경로 자체가 다르므로(레퍼런스 오디오 인코딩 단계 추가 등) 이 수치를 그대로 믿을 수 없다** — 재측정
 전까지는 "속도 문제가 여전히 있을 가능성이 높다" 정도로만 취급할 것.
 
-**③ `max_new_tokens` 튜닝(2026-08-19) — 600 → 170 → 180 → 190 → 195 → 200 → 300, 195로 확정(팀 결정)**
+**③ `max_new_tokens` 튜닝(2026-08-19) — 600 → 170 → 180 → 190 → 195 → 200 → 300, 최종 250(팀원 요청)**
 
 qwen_tts 라이브러리 기본값(2048)은 `do_sample=True`와 같이 쓰이면 운 나쁘게 멈춤 토큰을 늦게
 뽑을 때 생성이 폭주할 위험이 있어(2026-08-17 확인) 상한을 낮춰왔는데, 값을 너무 낮추면 이번엔
@@ -83,8 +83,9 @@ qwen_tts 라이브러리 기본값(2048)은 `do_sample=True`와 같이 쓰이면
 
 이 문장의 자연 완결 지점은 약 191토큰(15.92초)이다 — 200 미만 상한은 전부 그 지점보다 짧아
 매번 강제로 끊겼다(생성 불안정 문제가 아니라 단순 상한 부족). `DEFAULT_MAX_NEW_TOKENS`는
-**195로 확정**(팀 결정) — 이 문장 정도 길이의 재료 목록은 195에서 잘릴 수 있음을 감수한
-값이므로, 서비스에 이보다 더 긴 문장이 실제로 등장한다면 재조정이 필요하다.
+처음 195로 확정했으나, **팀원이 195에서도 잘린다고 확인해줘서 250으로 재조정(2026-08-19)**
+— 200/300 실측상 200 이상이면 자연 완결됐으므로 250도 여유 있게 안전할 것으로 판단했고,
+600(폭주 방지 목적)보다는 훨씬 낮게 유지.
 
 ## 진행 방법
 
