@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pip list)",
+      "Bash(python3 -m pip list)",
+      "Bash(grep -v \"/\\\\.git/\")"
+    ]
+  }
+}
