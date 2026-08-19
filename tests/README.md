@@ -21,6 +21,8 @@
 | `test_substitution.py` | 완성 | EC-21/AC-11 |
 | `test_identity.py` | 완성 | 쿠키 UUID(작업3) |
 | `test_mock_client.py` | 완성 | `db.get_client()` mock 자동 폴백 확인 |
+| `test_tts_pronunciation.py` | **신규(2026-08-19)** | `src/tts/pronunciation.py`의 발음 보정(겹받침 연음 오발음 패치, 예: "닭을"→"달글") 회귀테스트. `torch`/`qwen_tts` 불필요 — 순수 문자열 치환이라 pytest 전체 스위트에 GPU 의존성 안 늘림(일부러 `infer.py`와 분리) |
+| `test-audio/` | **신규(2026-08-19), git 미커밋 상태** | pytest 대상 아님 — TTS 발음/속도 실험하며 만든 청취 확인용 wav 모음(GPU 벤치마크 문장, "닭을" 겹받침 연음 비교 등). `roundtrip_audio/`와 마찬가지로 용량 문제로 커밋 안 하는 쪽이 기존 관례와 맞음, 커밋 여부 팀 확인 필요 |
 | `integration_test.md` | **작성 완료(137줄), AC-14/15 전체 PASS(2026-08-16)** | AC-14~16(GWT) 기준 **수동** 시나리오 체크리스트(시나리오 A~D + AC-15 반복테스트 + AC-16 자리) — `handle_utterance()`를 파이썬에서 직접 호출하는 방식, `app.py`가 없어도 지금 바로 실행 가능. AC-16(TTS)만 아직 블로킹 표시 |
 | `integration_scenario_test.py` | 작성됨, **31/31 PASS(2026-08-16)** | 위 `integration_test.md`의 시나리오 A~D + AC-15를 코드로 그대로 옮겨 순차 실행하는 진단 스크립트. 실제 DB 연결(`allow_mock=False`) 필요, GPU 불필요. 실행 결과(PASS/FAIL)를 보고 `integration_test.md` 체크박스를 채우는 용도 — pytest 아님, assert로 죽지 않고 끝까지 돌고 마지막에 요약 출력. ⚠️ 이 파일은 아직 `seunguk` 브랜치에만 있고 `main`엔 없음 — 병합 필요 |
 | `tts_cpu_inference_test.py` | 버그 2개 수정 후 Colab(2 vCPU)에서 정식 실행 완료(2026-08-17) | Qwen3-TTS CPU 추론 속도 실측(HF Spaces CPU Basic 2 vCPU 흉내), 5초 목표 PASS/FAIL 판정. `qwen_tts` 패키지 필요. **결과: 3문장 전부 FAIL, 전체 평균 197.48초(목표의 약 39.5배)** — CSV는 `cpu_inference_test_20260816_164450.csv`, 상세는 `../src/tts/README.md` 참고 |
