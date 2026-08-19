@@ -149,9 +149,18 @@ def load_tts_model():
 # qwen_tts 기본값은 max_new_tokens=2048(라이브러리 하드 디폴트) — do_sample=True(확률적
 # 샘플링)와 같이 쓰이다 보니, 운이 나쁘면(멈춤 토큰을 늦게 뽑으면) 짧은 문장도 최대치까지
 # 생성을 계속해서 실측상 20배 이상 느려지는 경우가 있었다(2026-08-17 확인). ChefEar는 조리
-# 안내 한 문장(몇 초 분량)만 읽으면 되므로 훨씬 낮게 잡아도 충분하다 — 여유를 넉넉히 둬도
-# 원래 최대치의 1/3도 안 됨.
-DEFAULT_MAX_NEW_TOKENS = 600
+# 안내 한 문장(몇 초 분량)만 읽으면 되므로 훨씬 낮게 잡아도 충분하다.
+# 170→180→190→195→200→300 순으로 실측(2026-08-19, 재료 분수 표현이 많은 긴 문장 기준) —
+# 이 문장의 자연 완결 지점은 약 191토큰(15.92초)이라 200 이상이어야 안 잘린다. 195로
+# 확정했다가 팀원이 195에서도 잘린다는 걸 확인해줘서 250으로 재조정(2026-08-19).
+# 200/300 실측상 200 이상은 자연 완결됐으니 250도 여유 있게 안전할 것으로 판단
+# (src/tts/README.md 실측 결과 ③ 참고).
+DEFAULT_MAX_NEW_TOKENS = 250
+
+# do_sample=True(확률적 샘플링)라 시드 고정 없이는 같은 문장도 호출마다 결과가 달라진다
+# (2026-08-19 확인: 그동안 시드 고정이 전혀 없었음). 재현 가능한 테스트/비교를 위해 매
+# 합성 직전에 이 시드로 리셋한다(팀원 노트북 test_epoch1_inference2.ipynb와 동일 패턴).
+DEFAULT_SEED = 42
 
 
 def tts_synthesize(
@@ -160,6 +169,7 @@ def tts_synthesize(
     language: str = "Korean",
     instruct: str = "",
     max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS,
+    seed: int = DEFAULT_SEED,
 ) -> tuple[np.ndarray, int]:
     """조리 안내 문장 하나 -> (waveform, sample_rate).
 
@@ -169,6 +179,12 @@ def tts_synthesize(
     """
 
     global _voice_clone_prompt
+
+    torch.manual_seed(seed)
+
+    if torch.cuda.is_available():
+
+        torch.cuda.manual_seed_all(seed)
 
     model = load_tts_model()
 

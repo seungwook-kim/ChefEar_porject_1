@@ -11,7 +11,7 @@ Qwen3-TTS-12Hz-1.7B(VoiceDesign)를 KSS 데이터셋으로 파인튜닝하고, H
 |---|---|---|
 | `prepare_data.py` | **비어있음(0줄)** | KSS 24kHz 리샘플링 — 실제로는 별도 개인 작업 공간(`test/scripts/prepare_qwen3_tts_data.py`)에서 이미 진행됨, 이 정식 위치로는 아직 이식 안 됨 |
 | `finetune_qwen3tts.py` | **비어있음(0줄)** | Qwen3-TTS QLoRA 파인튜닝 — 마찬가지로 `test/scripts/train_qwen3_tts.py`에서 이미 진행됨(체크포인트 이력은 아래 참고), 이 정식 위치로는 아직 이식 안 됨 |
-| `infer.py` | **완성, 13에포크 체크포인트 + voice-clone 방식으로 전면 교체(2026-08-19)** | `tts_synthesize(text) -> (waveform, sample_rate)`. 로드한 체크포인트의 `tts_model_type`을 보고 자동 분기: `"base"`(현재 기준 체크포인트)면 `assets/kss_reference.wav`로 목소리를 복제하는 `generate_voice_clone()`, `"custom_voice"`(과거 체크포인트로 되돌아갈 경우 대비)면 화자명 `SPEAKER="kss_speaker"`로 `generate_custom_voice()`. GPU 있으면 cuda/bfloat16, 없으면 CPU/float32로 자동 분기. `max_new_tokens` 기본값 600(생성 폭주 방지, 2026-08-17 도입) |
+| `infer.py` | **완성, 13에포크 체크포인트 + voice-clone 방식으로 전면 교체(2026-08-19), max_new_tokens/시드 튜닝 완료(2026-08-19)** | `tts_synthesize(text) -> (waveform, sample_rate)`. 로드한 체크포인트의 `tts_model_type`을 보고 자동 분기: `"base"`(현재 기준 체크포인트)면 `assets/kss_reference.wav`로 목소리를 복제하는 `generate_voice_clone()`, `"custom_voice"`(과거 체크포인트로 되돌아갈 경우 대비)면 화자명 `SPEAKER="kss_speaker"`로 `generate_custom_voice()`. GPU 있으면 cuda/bfloat16, 없으면 CPU/float32로 자동 분기. `max_new_tokens` 기본값 **250**(600→170→180→190→195→200→300 순으로 실측 후 195로 확정했다가, **팀원 요청으로 195에서도 잘리는 게 확인돼 250으로 재조정(2026-08-19)**, 아래 실측 결과 ③ 참고). 매 합성 직전 `torch.manual_seed(42)`로 시드 고정(재현성 확보 — 이전엔 `do_sample=True`인데 시드 고정이 전혀 없어 같은 문장도 호출마다 결과가 달랐음) |
 | `assets/kss_reference.wav` | **신규 추가(2026-08-19)** | voice-clone 레퍼런스 음성. KSS 원본 000008번(`나는 살아오면서 감기를 앓은 적이 한 번도 없다`) — `data/kss/metadata.csv`와 대본 페어 확인됨. Qwen 공식 데모의 영어 샘플 대신 실제 KSS 화자 목소리를 쓰려고 이걸로 골랐다 |
 | `pronunciation.py` | **신규 추가(2026-08-19)** | `apply_pronunciation_fixes(text)` — 겹받침 연음을 모델이 잘못 읽는 것으로 확인된 단어만 정규식으로 직접 치환("닭을"→"달글"). `tts_synthesize()`가 TTS로 넘기는 사본에만 적용하고 화면/로그/DB용 원문은 안 건드림. 아래 "③ 발음 보정" 참고 |
 
@@ -53,8 +53,10 @@ HF Hub `kimseunguk/qwen3-tts-kss-finetuned`(private)에 업로드. 학습 코드
 | 된장을 풀어줍니다 | 0.00 | 1.25 | **0.00** |
 | **평균** | **1.37** | **14.26** | **0.00** |
 
-결과 CSV: `results/tts/roundtrip_cer.csv`(git 커밋 대상). 합성 오디오는 `results/tts/roundtrip_audio/*.wav`
-— 용량 문제로 git 미커밋(`.gitignore`, 검증만 로컬에서 하면 됨).
+결과 CSV: `results/tts/roundtrip_cer.csv`(git 커밋 대상). 합성 오디오는 `results/tts/new_sentences_test/*.wav`
+— `tts_stt_roundtrip_test.py`의 `--sentences-file`로 어떤 문장 세트를 넣어도 오디오는 항상 이 폴더에
+쌓이도록 통일함(2026-08-19, 파일명이 `{순번:02d}_{텍스트슬러그}.wav`라 세트가 달라도 구분됨).
+용량 문제로 git 미커밋(개인 `.git/info/exclude`, 검증만 로컬에서 하면 됨).
 
 `tests/integration_issues_2026-08-18.md`에 기록된 🔴 #1(화자명 불일치)·#2(품질 저하) 이슈는 이
 체크포인트/코드 전환으로 **해소됨**. `AC-16`(TTS 딥러닝 검증)에 이 수치를 쓸 수 있다.
@@ -86,6 +88,29 @@ HF Hub `kimseunguk/qwen3-tts-kss-finetuned`(private)에 업로드. 학습 코드
 범용성은 낮지만 문장의 나머지 부분을 안 건드리므로 G2P 라이브러리의 교차-단어 버그에 노출되지
 않는다. 새 단어에서 같은 문제가 발견되면 `pronunciation.py`의 딕셔너리에 추가하면 된다.
 회귀테스트: `tests/test_tts_pronunciation.py`(torch 불필요, 빠른 pytest 스위트에 포함됨).
+
+**③ `max_new_tokens` 튜닝(2026-08-19) — 600 → 170 → 180 → 190 → 195 → 200 → 300, 최종 250(팀원 요청)**
+
+qwen_tts 라이브러리 기본값(2048)은 `do_sample=True`와 같이 쓰이면 운 나쁘게 멈춤 토큰을 늦게
+뽑을 때 생성이 폭주할 위험이 있어(2026-08-17 확인) 상한을 낮춰왔는데, 값을 너무 낮추면 이번엔
+정상적으로 긴 문장이 중간에 잘리는 반대 문제가 생긴다. 재료 목록이 긴 문장(분수 표현 다수 —
+"소금8분의1스푼, 간장2분의1스푼, ..." 총 8개 재료) 하나로 상한값별 실측:
+
+| max_new_tokens | 생성 길이 | 토큰 사용률 | 결과 |
+|---|---|---|---|
+| 170(≈14.17초) | 13.52초 | 95.4% | **잘림**(사용자 청취로 확인) |
+| 180(≈15.00초) | 14.32초 | 95.5% | 잘림(추정) |
+| 190(≈15.83초) | 15.12초 | 95.5% | **잘림**(사용자 청취로 확인, "잘려서 나왔네") |
+| 195(≈16.25초) | 15.52초 | 95.5% | 잘림(추정) |
+| 200(≈16.67초) | 15.92초 | 95.4% | **정상 완결** |
+| 250(≈20.83초) | 15.92초 | 76.4% | **정상 완결** |
+| 300(≈25.00초) | 15.92초 | 63.7% | **정상 완결** — EOS까지 자연스럽게 도달 후 정지 |
+
+이 문장의 자연 완결 지점은 약 191토큰(15.92초)이다 — 200 미만 상한은 전부 그 지점보다 짧아
+매번 강제로 끊겼다(생성 불안정 문제가 아니라 단순 상한 부족), 200 이상은 전부 15.92초로
+동일하게 정상 완결됨을 실측으로 확인. `DEFAULT_MAX_NEW_TOKENS`는 처음 195로 확정했으나,
+**팀원이 195에서도 잘린다고 확인해줘서 250으로 재조정(2026-08-19, 250 실측도 15.92초 정상
+완결로 확인됨)** — 600(폭주 방지 목적)보다는 훨씬 낮게 유지.
 
 ## 진행 방법
 
@@ -121,6 +146,10 @@ HF Hub `kimseunguk/qwen3-tts-kss-finetuned`(private)에 업로드. 학습 코드
 - HF 모델 `revision` 고정 — 재발 방지용, 아직 미적용(위 진행 방법 8번)
 - TTS 합성음을 STT 학습데이터로 쓰려면(`data/synthesized/`) `prepare_data.py`/`finetune_qwen3tts.py`
   이식이 선행되는 게 안전함
+- **겹받침(복합 종성) 발음이 간헐적으로 부자연스러움** — G2P(발음열 변환) 전처리가 파이프라인에
+  전혀 없고(`prepare_data.py`가 비어있음, 위 표 참고), KSS(~1.2만 문장)가 다양한 겹받침
+  재음절화 맥락을 충분히 커버 못 했을 가능성이 원인으로 추정됨(확정 원인 규명은 안 됨) — G2P
+  전처리 추가는 아직 계획에 없음
 
 ## 관련 문서
 
