@@ -38,6 +38,7 @@ import numpy as np
 import torch
 
 from orchestration.db import load_env
+from tts.pronunciation import apply_pronunciation_fixes
 
 # db.py의 get_client()와 동일한 방식 — python-dotenv 없이 .env를 os.environ에 채워 넣는다.
 # 아래 MODEL_ID가 이 시점의 os.environ을 바로 읽으므로, HF_TOKEN을 쓰는 load_tts_model()보다
@@ -171,6 +172,9 @@ def tts_synthesize(
 
     model_type = getattr(model.model, "tts_model_type", None)
 
+    # 화면 표시/로그/DB용 원문(text)은 그대로 두고, TTS에 넘길 사본에만 발음 보정을 적용.
+    tts_text = apply_pronunciation_fixes(text)
+
     if model_type == "base":
 
         # custom_voice 화자 임베딩이 없는 체크포인트 — 레퍼런스 음성으로 목소리를 복제해서 생성.
@@ -183,7 +187,7 @@ def tts_synthesize(
 
         wavs, sample_rate = model.generate_voice_clone(
 
-            text=text,
+            text=tts_text,
 
             language=language,
 
@@ -196,7 +200,7 @@ def tts_synthesize(
 
         wavs, sample_rate = model.generate_custom_voice(
 
-            text=text,
+            text=tts_text,
 
             language=language,
 
