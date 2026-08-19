@@ -38,6 +38,7 @@ build/
 .DS_Store
 .idea/
 .vscode/
+.claude/
 
 # 로그
 *.log
@@ -45,3 +46,4 @@ build/
 #test 배포 절대 하지 말 것
 result_test/*
 result_test_backup_ep13_working/*
+*.gitignore

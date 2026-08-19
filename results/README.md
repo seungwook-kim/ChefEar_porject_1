@@ -17,7 +17,7 @@ STT/TTS 파인튜닝 전/후 정량 비교 자료(WER, 추론 속도 등)를 쌓
 |---|---|---|---|
 | `tts/cpu_inference_test_20260816_164450.csv` | **main 브랜치에 커밋됨(2026-08-17)** | `tests/tts_cpu_inference_test.py` (Colab 2 vCPU 실행) | epoch-8 모델 기준 3문장 전부 FAIL, 전체 평균 197.48초(목표 5초의 약 39.5배). 13에포크+voice-clone 경로로는 **아직 재측정 안 함** — 코드 경로 자체가 달라져서 이 수치를 그대로 믿을 수 없음. 상세: `../src/tts/README.md` |
 | `tts/roundtrip_cer.csv` | **git 커밋됨, 최신 결과로 갱신(2026-08-19)** | `tests/tts_stt_roundtrip_test.py` (GPU 환경) | **13에포크 체크포인트 기준 5문장 전부 CER 0.0000** — 이전 epoch-8(평균 1.37)·epoch-24(평균 14.26, 아래 참고) 대비 완전 해소 |
-| `tts/roundtrip_cer_epoch24.csv` | **git 커밋됨(2026-08-19, 신규)** | 동일(화자명 이슈 우회 스크립트) | epoch-24 체크포인트에서 나온 회귀 데이터(평균 CER 14.26, 반복 루프 발화 다수) — 참고용으로 그대로 보존, 상세 원인은 `tests/integration_issues_2026-08-18.md` #2 |
+| `tts/roundtrip_cer_epoch24.csv` | **로컬에만 있음, git 미커밋(의도적 결정, 2026-08-19)** | 동일(화자명 이슈 우회 스크립트) | epoch-24 체크포인트에서 나온 회귀 데이터(평균 CER 14.26, 반복 루프 발화 다수) — 필요시 로컬에서 참고, 저장소엔 안 올림 |
 | `tts/roundtrip_audio/`, `tts/roundtrip_audio_epoch24/` | **git 미커밋(의도적, `.gitignore`)** | 위와 동일 | 합성 오디오 wav — 용량 문제로 커밋 대상에서 제외, CSV 결과만 기록으로 남김. 청취 확인은 로컬에서 직접 재생 |
 
 파일명이 기존 계획(`roundtrip_wer.csv`)과 다른 이유: WER 대신 CER로 지표를 바꿔서
