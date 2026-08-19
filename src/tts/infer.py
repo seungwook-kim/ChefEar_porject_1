@@ -7,9 +7,17 @@ Base:
 QLoRA 파인튜닝 + merge_and_unload (KSS 데이터셋):
     kimseunguk/qwen3-tts-kss-finetuned (private repo)
 
-파인튜닝 시 화자 임베딩을 spk_id 3000에 "kss_speaker_a100"이라는 이름으로 심어뒀기 때문에
-(train_qwen3_tts.py 참고), 합성은 사전학습 CustomVoice 모델과 동일한 generate_custom_voice()
-경로를 그대로 쓰고 speaker만 이 이름으로 지정하면 된다.
+[2026-08-19] 13에포크 체크포인트로 교체하면서 `tts_model_type`이 "base"로 바뀌었다(이전
+체크포인트는 "custom_voice"였음, `config.json`으로 실측 확인). base 타입은
+generate_custom_voice()를 지원하지 않아서(모델 자체에 화자 임베딩 테이블이 없음, `spk_id={}`),
+레퍼런스 음성으로 목소리를 복제하는 generate_voice_clone() 방식으로 전환했다. 레퍼런스는
+`assets/kss_reference.wav`(KSS 원본 음성 000008번, `data/kss/metadata.csv` 대본과 페어) —
+Qwen 공식 데모의 영어 샘플이 아니라 실제 KSS 화자 목소리를 쓰기 위해 이걸로 골랐다.
+
+혹시 나중에 custom_voice 타입 체크포인트로 되돌아가는 경우를 대비해 그 경로도 남겨뒀다
+(SPEAKER="kss_speaker" — 화자명이 "kss_speaker_a100"이 아니라 "kss_speaker"로 심어져 있었음,
+2026-08-18 실측 확인). `load_tts_model()`이 로드한 모델의 `tts_model_type`을 보고 자동으로
+분기한다.
 
 private repo라 로딩에 HF_TOKEN이 필요하다(.env, HF Spaces 배포 시엔 Repository secret으로 등록).
 
@@ -24,6 +32,7 @@ waveform, sample_rate = tts_synthesize("약불로 5분간 끓여주세요")
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -42,11 +51,24 @@ load_env()
 # .env의 HF_TTS_MODEL_REPO로 덮어쓸 수 있게 하되(.env.example.local 참고), 기본값은 확정된 모델로 고정.
 MODEL_ID = os.environ.get("HF_TTS_MODEL_REPO") or "kimseunguk/qwen3-tts-kss-finetuned"
 
+
+# custom_voice 타입 체크포인트로 되돌아갈 경우를 대비한 화자명("kss_speaker_a100"이 아니라
+# "kss_speaker"로 심어져 있었음, 2026-08-18 실측 확인).
 SPEAKER = "kss_speaker"
+
+# base 타입 체크포인트(현재 기준, 2026-08-19)의 목소리 복제용 레퍼런스 — KSS 원본 음성.
+_ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+VOICE_CLONE_REF_AUDIO = str(_ASSETS_DIR / "kss_reference.wav")
+VOICE_CLONE_REF_TEXT = "나는 살아오면서 감기를 앓은 적이 한 번도 없다."  # data/kss/metadata.csv 000008
+
 
 
 # 모델은 최초 1번만 로드하고 이후 호출에서 재사용
 _model = None
+
+# base 타입 체크포인트일 때만 쓰는 voice-clone 프롬프트 — 레퍼런스 오디오가 고정이라 최초
+# 1번만 만들고 재사용(모델 로드와 마찬가지로 매 합성마다 다시 만들 필요 없음).
+_voice_clone_prompt = None
 
 
 # ============================================================
@@ -145,19 +167,53 @@ def tts_synthesize(
     호출부에서 직접 쓰면 된다(이 함수는 파일 I/O를 하지 않음).
     """
 
+    global _voice_clone_prompt
+
     model = load_tts_model()
 
-    wavs, sample_rate = model.generate_custom_voice(
+    model_type = getattr(model.model, "tts_model_type", None)
 
-        text=text,
+    if model_type == "base":
 
-        language=language,
+        # custom_voice 화자 임베딩이 없는 체크포인트 — 레퍼런스 음성으로 목소리를 복제해서 생성.
+        if _voice_clone_prompt is None:
 
-        speaker=SPEAKER,
+            _voice_clone_prompt = model.create_voice_clone_prompt(
+                ref_audio=VOICE_CLONE_REF_AUDIO,
+                ref_text=VOICE_CLONE_REF_TEXT,
+            )
 
-        instruct=instruct,
+        wavs, sample_rate = model.generate_voice_clone(
 
-        max_new_tokens=max_new_tokens,
-    )
+            text=text,
+
+            language=language,
+
+            voice_clone_prompt=_voice_clone_prompt,
+
+            max_new_tokens=max_new_tokens,
+        )
+
+    elif model_type == "custom_voice":
+
+        wavs, sample_rate = model.generate_custom_voice(
+
+            text=text,
+
+            language=language,
+
+            speaker=SPEAKER,
+
+            instruct=instruct,
+
+            max_new_tokens=max_new_tokens,
+        )
+
+    else:
+
+        raise ValueError(
+            f"tts_synthesize()가 아직 지원하지 않는 tts_model_type={model_type!r} "
+            f"({MODEL_ID})"
+        )
 
     return wavs[0], sample_rate
