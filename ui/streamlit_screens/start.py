@@ -20,6 +20,13 @@ HINT_CHIPS = [
         "된장찌개 어떻게 만들어?",
     ),
     (
+        "hint_chip_budaejjigae",
+        '실제 TTS 음성 데모 — <span class="quote">“부대찌개 어떻게 만들어?”</span>',
+        "실제 TTS 음성 데모 — 부대찌개 어떻게 만들어?",
+        "budaejjigae",
+        "부대찌개 어떻게 만들어?",
+    ),
+    (
         "hint_chip_register",
         '등록된 레시피가 없는 경우 예시 — <span class="quote">“문어초무침 어떻게 만들어?”</span>',
         "등록된 레시피가 없는 경우 예시 — 문어초무침 어떻게 만들어?",
