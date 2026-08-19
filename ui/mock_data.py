@@ -20,8 +20,20 @@ RECIPES: dict[str, dict] = {
             {"name": "감자", "qty": "1개", "emoji": "🥔"},
             {"name": "두부", "qty": "1/2모", "emoji": "🧈"},
             {"name": "애호박", "qty": "1/3개", "emoji": "🥒"},
-            {"name": "양파", "qty": "1/2개", "emoji": "🧅"},
             {"name": "된장", "qty": "1큰술", "emoji": "🫘"},
+            {"name": "양파", "qty": "1/2개", "emoji": "🧅"},
+        ],
+        # recipe_confirm 화면의 "재료 미리보기"는 HTML 목업(02_recipe_confirm.html)처럼
+        # 수량 없이 7개를 보여준다. cooking_step 화면의 "오늘의 재료"는 수량이 있는
+        # 위 ingredients를 그대로 쓰므로 건드리지 않는다.
+        "preview_ingredients": [
+            {"name": "감자", "emoji": "🥔"},
+            {"name": "두부", "emoji": "🧈"},
+            {"name": "애호박", "emoji": "🥒"},
+            {"name": "양파", "emoji": "🧅"},
+            {"name": "대파", "emoji": "🌱"},
+            {"name": "멸치육수", "emoji": "🐟"},
+            {"name": "된장", "emoji": "🫘"},
         ],
         "steps": [
             {"text": "멸치와 다시마로 육수를 끓입니다.", "minutes": 5},
