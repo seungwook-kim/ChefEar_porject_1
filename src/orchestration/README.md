@@ -19,6 +19,7 @@ Streamlit 세션(`st.session_state`)을 함수 인자로 받는 형태라 Stream
 | `registration.py` | 완성 | `register_recipe`(다단계 세션) / `save_recipe`(최종 저장) |
 | `load_data.py` | 완성 | CSV → Supabase 적재 CLI. `python src/orchestration/load_data.py --csv <경로> [--dry-run]` |
 | `pipeline.py` | 완성 | `get_precomputed_steps`/`get_current_step`/`advance_step`/`manual_fallback`(7.4/7.1.1) + `handle_utterance()`(STT 텍스트 → `classify_intent()` → 의도별 라우팅 → 응답, `app.py`가 호출할 최종 진입점) |
+| `entity_extract.py` | **신규(2026-08-19)** | 자유발화에서 요리명/재료명을 뽑는 규칙 기반 v1(`extract_dish_name`/`extract_substitution_ingredients`) — `classify_intent()`는 의도만 분류하고 세부 정보는 안 뽑아서, 원래 `app.py`가 채워야 했던 부분. 정규식/토큰 분리만 씀(LLM·임베딩 미사용, AGENTS.md 원칙). `app.py`가 사용 |
 
 ## 진행 방법
 
