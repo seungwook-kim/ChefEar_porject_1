@@ -4,6 +4,13 @@ Streamlit 기본 위젯(st.button 등)은 그대로 쓰고, 배지·카드·재�
 Streamlit 기본 컴포넌트로 표현하기 어려운 조각만 st.markdown(unsafe_allow_html=True)로
 그린다. docs/ChefEar_PRD_SDD_v0.8.md 3.3의 화면 구성(①~⑥)을 그대로 따른다.
 """
+import base64
+import json
+from pathlib import Path
+from string import Template
+
+import numpy as np
+import soundfile as sf
 import streamlit as st
 
 CSS = """
@@ -33,6 +40,14 @@ CSS = """
 footer { visibility: hidden; }
 [data-testid="stToolbar"] { visibility: hidden; }
 [data-testid="stHeader"] { background: transparent; box-shadow: none; }
+/* 버그 실측(2026-08-19, Playwright): background만 투명하게 해도 헤더 <header> 자체는
+   여전히 화면 맨 위(y=0~약 46px)를 뷰포트 기준 고정으로 덮고 있어서, 그 자리에 있는
+   콘텐츠(recipe_confirm의 "처음으로" 링크가 order:-1로 맨 위까지 끌어올려짐)를 클릭해도
+   투명한 헤더가 클릭을 가로채 버렸다(눈엔 안 보이니 원인 파악이 어려웠음,
+   document.elementFromPoint()로 실제 확인). 헤더 전체를 클릭 통과시키고, 남겨두기로 한
+   사이드바 열기 버튼만 다시 클릭 가능하게 되돌린다. */
+[data-testid="stHeader"] { pointer-events: none; }
+[data-testid="stExpandSidebarButton"] { pointer-events: auto; }
 
 /* ui/html/assets/style.css의 body(#e9e2d3 바깥 배경) + .screen(카드 자체) 2단 구조를 그대로 옮김 */
 .stApp { background: #e9e2d3; }
@@ -131,6 +146,16 @@ div.stTextInput input {
   background: var(--surface); border-radius: 22px; padding: 22px 20px;
   box-shadow: 0 10px 24px rgba(36,28,21,0.07);
 }
+/* cooking_step의 조리 카드 - 재생바가 실제 오디오(iframe)일 때는 순수 HTML(.ce-card
+   div)로 못 감싸서(별도 Streamlit 엘리먼트라 하나의 st.markdown 안에 못 넣음) 진짜
+   st.container(key="cs_step_card")를 카드로 쓴다. 그 컨테이너의 실제 DOM 래퍼에
+   .ce-card와 동일한 스타일을 입힌다(theme.render_step_card() 참고). 두 속성 선택자
+   조합이라 전역 gap 규칙([data-testid="stVerticalBlock"] { gap: 1.35rem; })보다
+   specificity가 높아 !important 없이 아래 gap이 이긴다. */
+[data-testid="stVerticalBlock"][class*="st-key-cs_step_card"] {
+  background: var(--surface); border-radius: 22px; padding: 22px 20px;
+  box-shadow: 0 10px 24px rgba(36,28,21,0.07); gap: 14px;
+}
 
 .ce-dots { display:flex; justify-content:center; gap:9px; }
 .ce-dots .d { width:9px; height:9px; border-radius:50%; background: var(--border); }
@@ -200,7 +225,7 @@ div.stButton > button[kind="primary"]:hover { background: var(--accent-dark); bo
   background: var(--accent-soft); color: var(--accent); display:grid; place-items:center;
 }
 .ce-wave { flex:1; display:flex; align-items:center; gap:3px; height:26px; overflow:hidden; }
-.ce-wave span { width:3px; border-radius:2px; background: var(--accent); opacity:.85; display:inline-block; }
+.ce-wave span { flex:1 1 0; min-width:0; border-radius:2px; background: var(--accent); opacity:.85; }
 
 .ce-mic-bar {
   display:flex; align-items:center; gap:14px; background: var(--surface);
@@ -216,6 +241,20 @@ div.stButton > button[kind="primary"]:hover { background: var(--accent-dark); bo
 .ce-mic-icon.idle { background: var(--surface-alt); color: var(--accent); border:2px solid var(--border); }
 .ce-mic-status .state { font-weight:800; color: var(--accent-dark); font-size:14.5px; display:block; }
 .ce-mic-status .hint { font-size:12px; color: var(--text-secondary); display:block; }
+
+/* cooking_step의 실제 녹음 가능한 "듣는 중" 바(render_mic_bar_interactive) - ce_big_mic와
+   같은 투명 버튼 오버레이 패턴. div.stButton에 height:100%를 처음부터 같이 넣어서
+   ce_big_mic에서 겪은 "버튼이 부모 높이를 못 물려받아 클릭 영역이 위쪽 일부만 되는" 버그를
+   재발시키지 않는다(원인은 ce_big_mic 관련 주석 참고). */
+[class*="st-key-cs_mic_bar"] { position: relative; }
+[class*="st-key-cs_mic_bar"] [data-testid="stElementContainer"]:has(div.stButton) {
+  position: absolute; inset: 0; z-index: 2;
+}
+[class*="st-key-cs_mic_bar"] div.stButton { height: 100%; }
+[class*="st-key-cs_mic_bar"] div.stButton > button {
+  width: 100%; height: 100%; padding: 0; border: none; background: transparent;
+  box-shadow: none; color: transparent; cursor: pointer;
+}
 
 .ce-big-mic-wrap { display:flex; justify-content:center; margin: 34px 0 8px; cursor: pointer; }
 .ce-big-mic { width:84px; height:84px; border-radius:50%; display:grid; place-items:center;
@@ -234,11 +273,23 @@ div.stButton > button[kind="primary"]:hover { background: var(--accent-dark); bo
 
 /* 큰 원형 마이크(장식용 그림 + 안내 문구) 전체를 클릭 영역으로 만들어, 눌렀을 때만
    실제 녹음 위젯(st.audio_input)이 나타나게 한다 - hint_chip과 같은 방식으로 투명
-   버튼을 그 위에 겹친다. */
+   버튼을 그 위에 겹친다.
+
+   버그 실측(2026-08-19, Playwright로 실제 클릭 좌표 확인): stElementContainer는
+   position:absolute+inset:0로 부모(151px 높이) 전체를 정확히 덮었지만, 그 안의
+   실제 <button>은 40px 높이로만 렌더링돼서 아이콘 아래쪽·안내 문구 영역은 눌러도
+   반응이 없었다. 원인은 button { height:100% }가 자기 직계 부모인 div.stButton
+   기준으로 계산되는데, div.stButton 자체엔 height가 없어(기본값 auto) 퍼센트
+   높이가 안 먹혔기 때문(width는 block 요소가 기본으로 부모 너비를 꽉 채우는 것과
+   달리 height:auto는 내용물 높이만큼만 차지함 - 그래서 width:100%는 이미 되고
+   있었는데 height:100%만 깨져 있었다). div.stButton 자체에도 height:100%를 줘서
+   퍼센트 체인을 이어준다 - 아래 hint_chip/ce_back_link도 같은 패턴이라 동일하게
+   고침. */
 [class*="st-key-ce_big_mic"] { position: relative; }
 [class*="st-key-ce_big_mic"] [data-testid="stElementContainer"]:has(div.stButton) {
   position: absolute; inset: 0; z-index: 2;
 }
+[class*="st-key-ce_big_mic"] div.stButton { height: 100%; }
 [class*="st-key-ce_big_mic"] div.stButton > button {
   width: 100%; height: 100%; padding: 0; border: none; background: transparent;
   box-shadow: none; color: transparent; cursor: pointer;
@@ -254,6 +305,11 @@ div.stButton > button[kind="primary"]:hover { background: var(--accent-dark); bo
 [class*="st-key-hint_chip"] [data-testid="stElementContainer"]:has(div.stButton) {
   position: absolute; inset: 0; z-index: 2;
 }
+/* div.stButton 자체에도 height:100%를 줘야 그 안의 button { height:100% }가 실제로
+   부모(stElementContainer, 여기서 카드 전체 높이로 늘어남) 기준으로 계산된다 - 안
+   주면 button이 자기 내용물 높이(~40px)로만 렌더링돼서 클릭 영역이 카드 위쪽 일부만
+   덮는 버그가 생긴다(ce_big_mic에서 Playwright로 실측 확인한 것과 동일한 원인). */
+[class*="st-key-hint_chip"] div.stButton { height: 100%; }
 [class*="st-key-hint_chip"] div.stButton > button {
   width: 100%; height: 100%; padding: 0; border: none; background: transparent;
   box-shadow: none; color: transparent; cursor: pointer;
@@ -281,6 +337,7 @@ div.stButton > button[kind="primary"]:hover { background: var(--accent-dark); bo
 [class*="st-key-ce_back_link"] [data-testid="stElementContainer"]:has(div.stButton) {
   position: absolute; inset: 0; z-index: 2;
 }
+[class*="st-key-ce_back_link"] div.stButton { height: 100%; }
 [class*="st-key-ce_back_link"] div.stButton > button {
   width: 100%; height: 100%; padding: 0; border: none; background: transparent;
   box-shadow: none; color: transparent; cursor: pointer;
@@ -362,6 +419,7 @@ _MIC_BODY = (
 ICON_MIC_MD = _SVG.format(size=22, body=_MIC_BODY)
 ICON_MIC_LG = _SVG.format(size=34, body=_MIC_BODY)
 ICON_PLAY = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 3 20 12 6 21 6 3"/></svg>'
+ICON_PAUSE = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="3" width="5" height="18" rx="1.5"/><rect x="14" y="3" width="5" height="18" rx="1.5"/></svg>'
 ICON_CHEVRON_LEFT = _SVG.format(size=12, body='<polyline points="15 18 9 12 15 6"/>')
 
 
@@ -455,26 +513,151 @@ def render_player() -> None:
     카드 안에 넣을 땐 render_step_card()를 써야 한다(아래 설명 참고)."""
     st.markdown(_player_html(), unsafe_allow_html=True)
 
+_AUDIO_PLAYER_TEMPLATE = Template("""
+<style>
+  * { margin:0; padding:0; box-sizing:border-box;
+      font-family: "Pretendard", -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
+  .player { display:flex; align-items:center; gap:14px; background:#fbf6ec;
+    border-radius:999px; padding:10px 14px; }
+  .play-btn { width:38px; height:38px; min-width:38px; border-radius:50%; border:none; cursor:pointer;
+    background:#fbebd3; color:#ee7b36; display:grid; place-items:center; }
+  .play-btn:hover { background:#f6dfb8; }
+  .wave { flex:1; display:flex; align-items:center; gap:3px; height:26px; overflow:hidden; }
+  .wave span { flex:1 1 0; min-width:0; border-radius:2px; background:#ee7b36; opacity:.4;
+    align-self:center; transition: opacity .1s linear; }
+  .wave span.played { opacity:1; }
+</style>
+<div class="player">
+  <button class="play-btn" id="playbtn" type="button" aria-label="재생">$play_icon</button>
+  <span class="wave" id="wave">$bars</span>
+</div>
+<audio id="audio" src="$audio_src" preload="auto" autoplay></audio>
+<script>
+  const btn = document.getElementById('playbtn');
+  const audio = document.getElementById('audio');
+  const wave = document.getElementById('wave');
+  const bars = wave.querySelectorAll('span');
+  const iconPlay = $play_icon_js;
+  const iconPause = $pause_icon_js;
 
-def render_step_card(total: int, current_step: int, step_text: str, minutes: int | None) -> None:
-    """조리 화면의 .ce-card(점 표시 + 단계 텍스트 + 소요시간 + 재생 파형) 전체를 통째로 그린다.
+  // 실제 재생 위치에 맞춰 막대를 하나씩 "지나갔다"는 색으로 칠한다(진짜 파형 진행 표시).
+  // 막대 높이 자체는 이미 실제 오디오 진폭으로 그려져 있다(render_audio_player 참고),
+  // 여기서는 재생 헤드 위치만 표시한다.
+  function updateProgress() {
+    if (!audio.duration) { return; }
+    const ratio = audio.currentTime / audio.duration;
+    const played = Math.round(ratio * bars.length);
+    bars.forEach(function (bar, i) { bar.classList.toggle('played', i < played); });
+  }
+  audio.addEventListener('timeupdate', updateProgress);
 
-    st.markdown()은 호출마다 완전히 분리된 HTML 조각으로 렌더링돼서, 카드를 열고
-    (`<div class="ce-card">`) 다른 st.markdown 호출들을 거쳐 나중에 닫으면(`</div>`) 그
-    안에 있어야 할 내용이 카드 밖으로 빠져나가고 빈 카드만 남는다(실제로 이 버그가
-    발생해서 빈 흰색 알약 모양 박스로 보였다). 그래서 카드 내용 전체를 반드시 하나의
-    st.markdown 호출로 합쳐서 그린다.
+  btn.addEventListener('click', function () {
+    if (audio.paused) { audio.play(); } else { audio.pause(); }
+  });
+  audio.addEventListener('play', function () { btn.innerHTML = iconPause; });
+  audio.addEventListener('pause', function () { btn.innerHTML = iconPlay; });
+  audio.addEventListener('ended', function () {
+    btn.innerHTML = iconPlay;
+    bars.forEach(function (bar) { bar.classList.remove('played'); });
+  });
+  // 자동재생이 브라우저 정책으로 막히면(autoplay 속성만으론 항상 보장되지 않음) 그냥
+  // 대기 상태로 남고, 사용자가 재생 버튼을 눌러 시작할 수 있다.
+  audio.play().catch(function () {});
+</script>
+""")
+
+
+def _compute_wave_bars(audio_path: str | Path, num_bars: int = 20, min_h: int = 4, max_h: int = 28) -> list[int]:
+    """실제 wav 파형을 num_bars개 구간으로 나눠 구간별 RMS 진폭을 막대 높이(px)로 바꾼다.
+
+    기존 _WAVE_HEIGHTS는 모든 문장에 똑같이 재사용되는 가짜(장식용) 값이었다 — 이 함수는
+    합성된 wav를 실제로 읽어서, 조용한 구간은 낮게 시끄러운(강세가 있는) 구간은 높게
+    나오도록 진짜 파형 모양을 만든다(2026-08-19, 사용자 요청).
     """
-    time_html = f'<div class="ce-time">{ICON_CLOCK} 약 {minutes}분</div>' if minutes is not None else ""
-    st.markdown(
-        '<div class="ce-card">'
-        + _dots_html(total, current_step)
-        + f'<p class="ce-step-title">{step_text}</p>'
-        + time_html
-        + _player_html()
-        + "</div>",
-        unsafe_allow_html=True,
+    data, _ = sf.read(str(audio_path), dtype="float32", always_2d=False)
+    if data.ndim > 1:
+        data = data.mean(axis=1)
+    if len(data) == 0:
+        return [min_h] * num_bars
+    chunk_size = max(1, len(data) // num_bars)
+    rms_values = []
+    for i in range(num_bars):
+        start = i * chunk_size
+        end = len(data) if i == num_bars - 1 else start + chunk_size
+        chunk = data[start:end]
+        rms_values.append(float(np.sqrt(np.mean(np.square(chunk)))) if len(chunk) else 0.0)
+    peak = max(rms_values) or 1.0
+    return [round(min_h + (v / peak) * (max_h - min_h)) for v in rms_values]
+
+
+def render_audio_player(audio_path: str | Path, height: int = 64) -> None:
+    """theme.py의 장식용 재생바(.ce-player)와 똑같이 생긴, 실제로 재생되는 위젯.
+
+    st.audio()는 브라우저 기본 재생 컨트롤(탐색바 포함)을 그대로 노출해서 앱 디자인과
+    안 어울린다 — 브라우저 네이티브 미디어 컨트롤은 CSS로 커스터마이징이 사실상 불가능하다
+    (표준화된 크로스 브라우저 방법이 없음, Chromium의 ::-webkit-media-controls는 비표준·
+    브라우저 업데이트마다 깨질 수 있음). 그래서 st.iframe()으로 이 카드와 똑같은
+    모양(둥근 배경 + 원형 재생 버튼 + 막대 파형)의 HTML/JS를 직접 그리고, 클릭하면 JS로
+    <audio>를 재생/정지하는 방식으로 만들었다. render_step_card()의 장식용 재생바는
+    건드리지 않고, 그 아래에 이 진짜 위젯을 별도로 놓는다.
+
+    iframe이라 부모 문서의 CSS 변수(:root)를 못 물려받아서, .ce-player/.ce-play-btn/
+    .ce-wave와 같은 색상값을 여기서 다시 하드코딩했다(위 CSS :root의 --surface-alt/
+    --accent/--accent-soft 값과 동일 — 그쪽이 바뀌면 여기도 같이 바꿔야 함).
+
+    막대 높이는 _compute_wave_bars()로 이 파일의 실제 진폭을 읽어서 그린다(고정된 가짜
+    파형이 아님). <audio autoplay>를 넣어서 "다음"/"이전"으로 이 위젯이 새로 렌더링될
+    때마다(=화면이 다시 그려질 때마다) 자동 재생을 시도한다 — 브라우저 자동재생 정책상
+    100% 보장되진 않지만(사용자가 이미 페이지와 상호작용한 뒤라 대부분 허용됨), 막히면
+    조용히 대기 상태로 남고 재생 버튼으로 수동 시작 가능하다.
+    """
+    data = Path(audio_path).read_bytes()
+    audio_src = "data:audio/wav;base64," + base64.b64encode(data).decode("ascii")
+    bar_heights = _compute_wave_bars(audio_path)
+    bars_html = "".join(f'<span style="height:{h}px"></span>' for h in bar_heights)
+    html = _AUDIO_PLAYER_TEMPLATE.substitute(
+        play_icon=ICON_PLAY,
+        bars=bars_html,
+        audio_src=audio_src,
+        play_icon_js=json.dumps(ICON_PLAY),
+        pause_icon_js=json.dumps(ICON_PAUSE),
     )
+    st.iframe(html, height=height)
+
+
+def render_step_card(
+    total: int,
+    current_step: int,
+    step_text: str,
+    show_player: bool = True,
+    audio_path: str | Path | None = None,
+) -> None:
+    """조리 화면의 카드(점 표시 + 단계 텍스트 + 재생바)를 흰 박스 안에 그린다.
+
+    순수 HTML(`<div class="ce-card">`)로 카드를 열고 여러 st.markdown 호출을 거쳐
+    나중에 닫으면 안의 내용이 카드 밖으로 빠져나간다(각 st.markdown은 완전히 분리된
+    HTML 조각이라 — 예전엔 이래서 카드 내용을 전부 한 st.markdown 호출로 합쳤었다).
+    그런데 render_audio_player()가 쓰는 st.iframe()은 markdown 문자열 안에 넣을 수
+    없는 별도 Streamlit 엘리먼트라 그 방법이 안 통한다. 그래서 실제 오디오가 있을 땐
+    진짜 Streamlit 컨테이너(st.container(key="cs_step_card"))를 카드로 쓴다 — 그
+    컨테이너가 만드는 실제 DOM 래퍼에 .ce-card와 같은 스타일을 입혀뒀고(위 CSS 참고),
+    그 컨테이너의 자식으로 dots+제목(markdown)과 재생바(markdown 또는 iframe)를
+    순서대로 넣으면 진짜로 같은 흰 박스 안에 nesting된다(2026-08-19, 재생바를 카드
+    안에 넣어달라는 요청으로 구조 변경).
+
+    audio_path가 주어지면 그 wav로 render_audio_player()를 카드 안에 넣는다(진짜
+    재생 가능). None이고 show_player=True면 장식용 정지 파형만 보여준다(다른
+    레시피처럼 오디오가 없는 경우).
+    """
+    with st.container(key="cs_step_card"):
+        st.markdown(
+            _dots_html(total, current_step) + f'<p class="ce-step-title">{step_text}</p>',
+            unsafe_allow_html=True,
+        )
+        if audio_path is not None:
+            render_audio_player(audio_path)
+        elif show_player:
+            st.markdown(_player_html(), unsafe_allow_html=True)
 
 
 def render_mic_bar(state: str, hint: str, listening: bool = True) -> None:
@@ -485,6 +668,36 @@ def render_mic_bar(state: str, hint: str, listening: bool = True) -> None:
         f'<div class="ce-mic-status"><span class="state">{state}</span><span class="hint">{hint}</span></div></div>',
         unsafe_allow_html=True,
     )
+
+
+def render_mic_bar_interactive(hint: str, key: str = "cs_mic_bar"):
+    """render_mic_bar()의 실제 녹음 가능한 버전 - "듣는 중" 표시가 장식으로 끝나지 않고
+    진짜 마이크 입력을 받는다(2026-08-19, cooking_step용으로 추가).
+
+    render_big_mic()과 같은 2단계 구조: 이 바를 누르면 그 아래 진짜 st.audio_input()이
+    나타나고, 그 위젯 자체의 녹음 버튼을 눌러야 브라우저 마이크 권한 프롬프트가 뜬다
+    (커스텀 오버레이 버튼 하나로 브라우저 getUserMedia() 권한 요청까지 한 번에 흉내낼
+    수 없음 - render_big_mic() 문서 참고). 녹음된 오디오(UploadedFile) 또는 아직 없으면
+    None을 반환한다.
+
+    register_dish_name.py/unclassified.py는 여전히 장식용 render_mic_bar()를 쓴다 -
+    요청받은 화면(cooking_step)만 바꿨다.
+    """
+    state_key = f"{key}_show_recorder"
+    st.session_state.setdefault(state_key, False)
+
+    with st.container(key=key):
+        st.markdown(
+            f'<div class="ce-mic-bar"><span class="ce-mic-icon listening">{ICON_MIC_MD}</span>'
+            f'<div class="ce-mic-status"><span class="state">듣는 중</span><span class="hint">{hint}</span></div></div>',
+            unsafe_allow_html=True,
+        )
+        if st.button("마이크로 말하기", key=f"{key}_btn", use_container_width=True):
+            st.session_state[state_key] = True
+
+    if not st.session_state[state_key]:
+        return None
+    return st.audio_input("음성으로 말씀해주세요", key=f"{key}_input", label_visibility="collapsed")
 
 
 def render_big_mic():

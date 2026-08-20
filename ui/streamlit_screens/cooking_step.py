@@ -4,11 +4,26 @@
 docs/ChefEar_PRD_SDD_v0.8.md 7.1.1 상태 전이 규칙을 그대로 구현했다(정적 HTML 프로토타입과의
 차이점 - 여기서는 st.session_state.step_number가 실제로 바뀐다).
 """
+from pathlib import Path
+
 import streamlit as st
 
 from mock_data import fresh_recipe
 from nav import goto
-from theme import render_badge, render_chat, render_chips, render_mic_bar, render_section_title, render_step_card
+from theme import (
+    render_badge,
+    render_chat,
+    render_chips,
+    render_mic_bar_interactive,
+    render_section_title,
+    render_step_card,
+)
+
+# 실제 음성이 있는 레시피(부대찌개, ui/assets/audio/budaejjigae/)는 render_step_card()에
+# audio_path를 넘겨서 카드 안에 진짜 재생바(theme.render_audio_player(), .ce-player와
+# 같은 모양의 커스텀 위젯)를 넣는다 — st.audio()는 브라우저 기본 재생바가 그대로 노출돼
+# 앱 디자인과 안 맞아서 안 쓴다. 오디오가 없는 레시피는 장식용 정지 파형만 보여준다.
+_AUDIO_DIR = Path(__file__).resolve().parent.parent / "assets" / "audio"
 
 
 def _ensure_recipe() -> dict:
@@ -27,7 +42,16 @@ def render() -> None:
 
     render_badge(f'{recipe["dish_name"]} · {step_number} / {total} 단계')
 
-    render_step_card(total, step_number, current["text"], current.get("minutes"))
+    audio_file = current.get("audio")
+    audio_path = _AUDIO_DIR / recipe["id"] / audio_file if audio_file else None
+    has_real_audio = audio_path is not None and audio_path.exists()
+
+    # 진짜 오디오가 있으면 그 wav로 카드 안에 진짜 재생바를 넣고(audio_path), 없으면
+    # 장식용 정지 파형만 보여준다(theme.render_step_card() 참고).
+    render_step_card(total, step_number, current["text"], audio_path=audio_path if has_real_audio else None)
+
+    if audio_file and not has_real_audio:
+        st.caption(f"⚠️ 음성 파일 없음: {audio_path.relative_to(_AUDIO_DIR.parent.parent)}")
 
     render_section_title("오늘의 재료")
     render_chips(recipe["ingredients"], substituted_name=st.session_state.get("substituted_ingredient"))
@@ -40,7 +64,9 @@ def render() -> None:
     ]
     render_chat(chat)
 
-    render_mic_bar("듣는 중", '"다음" · "다시" · "재료 바꾸기"', listening=True)
+    audio_input = render_mic_bar_interactive('"다음" · "다시" · "재료 바꾸기"')
+    if audio_input is not None:
+        st.info("녹음을 받았어요. STT 연결은 아직 준비 중이라 실제 음성 인식은 안 돼요 (src/ui/README.md 참고).")
 
     c1, c2, c3 = st.columns(3)
     with c1:
