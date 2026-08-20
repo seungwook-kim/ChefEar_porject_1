@@ -544,7 +544,6 @@ def render_player() -> None:
     카드 안에 넣을 땐 render_step_card()를 써야 한다(아래 설명 참고)."""
     st.markdown(_player_html(), unsafe_allow_html=True)
 
-
 _AUDIO_PLAYER_TEMPLATE = Template("""
 <style>
   * { margin:0; padding:0; box-sizing:border-box;

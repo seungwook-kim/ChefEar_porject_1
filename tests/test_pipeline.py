@@ -152,6 +152,25 @@ def test_handle_utterance_substitution_updates_session_and_can_be_cancelled():
     assert session["current_recipe_id"] == base["id"]
 
 
+def test_handle_utterance_substitution_no_match_reports_match_type_none():
+    """이슈 #8(tests/integration_issues_2026-08-18.md): 매칭 완전 실패 시
+    match_type == "none"이 handle_utterance() 응답에서 조용히 빠질 수 있는데도
+    이를 지키는 pytest 회귀테스트가 없었다. tests/integration_test.md 시나리오 C를
+    그대로 옮겨 직접 assert한다."""
+    client = FakeSupabaseClient()
+    base = _seed_recipe_with_steps(client)
+    session = {"current_recipe_id": base["id"], "step_number": 2}
+
+    result = handle_utterance(
+        session, "문어랑 성게 같이 넣어도 돼?", requested_ingredient=["문어", "성게"], client=client
+    )
+
+    assert result["intent"] == "재료대체"
+    assert result["match_type"] == "none"
+    assert result["message"]  # 그럴싸하게 지어내지 않고 정직한 안내 문구가 있어야 함(1.5 원칙)
+    assert session["current_recipe_id"] == base["id"]  # 매칭 실패 시 세션은 그대로 유지
+
+
 def test_handle_utterance_search_sets_current_recipe():
     client = FakeSupabaseClient()
     recipe = client.table("recipes").seed({"dish_name": "떡볶이", "ingredients": "떡", "source": "api_standard"})
