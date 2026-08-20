@@ -600,3 +600,62 @@ def run_batch_test(
 
 
     return result_df
+
+
+# ============================================================
+# 단일 발화 실시간 추론 (faster-whisper, 원본 모델) — 2026-08-20 추가
+# ============================================================
+#
+# 위 load_stt_model()/run_batch_test()는 파인튜닝된 4bit QLoRA Adapter를 쓰는데
+# bitsandbytes 4bit 양자화가 GPU(CUDA) 전용이라, GPU 없는 환경(예: 이 저장소를
+# 로컬 CPU에서 테스트할 때)에서는 아예 로드가 안 된다. 그리고 배포용으로 정해둔
+# faster-whisper(requirements.txt)로 쓰려면 파인튜닝된 Adapter를 CTranslate2
+# 포맷으로 변환해야 하는데, 이 변환은 위 README의 "faster-whisper/CTranslate2
+# 기반 경량화 검토" 항목대로 아직 안 된 상태다(2026-08-20 확인) — 이 파일 담당자
+# (하주성)의 파인튜닝 검증 작업 영역이라 여기서 대신 변환하지 않는다.
+#
+# 그래서 이 함수는 일단 파인튜닝 안 된 원본 openai/whisper-large-v3-turbo를
+# faster-whisper로 돌린다 — "마이크 → VAD → 텍스트 → 요리명 인식" 파이프라인
+# 자체가 동작하는지 먼저 확인하려는 용도다(2026-08-20, 상시 마이크 테스트 화면
+# 요청). 요리 도메인 파인튜닝이 아니라서 인식 정확도는 V1 Adapter보다 낮을 수
+# 있다 — 나중에 CTranslate2 변환이 끝나면 아래 REALTIME_MODEL_SIZE만 그 경로로
+# 바꾸면 된다(이 함수를 호출하는 쪽 코드는 안 바뀜).
+REALTIME_MODEL_SIZE = os.environ.get("HF_STT_REALTIME_MODEL") or "large-v3-turbo"
+
+_realtime_model = None
+
+
+def load_realtime_stt_model():
+    """faster-whisper 모델을 최초 1번만 로드하고 이후 호출에서 재사용한다
+    (tts.infer.load_tts_model()과 같은 지연 로딩·캐싱 패턴)."""
+    global _realtime_model
+    if _realtime_model is not None:
+        return _realtime_model
+
+    from faster_whisper import WhisperModel
+
+    _realtime_model = WhisperModel(REALTIME_MODEL_SIZE, device="cpu", compute_type="int8")
+    print(f"[STT] 실시간 추론용 faster-whisper 모델 로드 완료: {REALTIME_MODEL_SIZE} (원본, 파인튜닝 아님)")
+    return _realtime_model
+
+
+def stt_transcribe(waveform, sample_rate: int = 16000) -> str:
+    """오디오 배열 하나(예: VAD로 잘라낸 발화 한 구간) -> 인식된 텍스트 한 줄.
+
+    orchestration.pipeline.handle_utterance()에 그대로 넣을 수 있는 형태로 반환한다
+    — src/tts/infer.py의 tts_synthesize()와 대칭되는 STT 쪽 단일 발화 함수(위
+    run_batch_test()용 _transcribe_audio()는 "파일 경로"를 받는 배치 전용이라
+    실시간 마이크 오디오 배열엔 그대로 못 쓴다).
+
+    waveform은 float32 numpy 배열(모노)이어야 한다 — sample_rate가 16000이 아니면
+    whisper가 기대하는 16kHz로 리샘플링한다(librosa는 이미 이 파일 상단에서 씀).
+    """
+    import numpy as np
+
+    waveform = np.asarray(waveform, dtype=np.float32)
+    if sample_rate != 16000:
+        waveform = librosa.resample(waveform, orig_sr=sample_rate, target_sr=16000)
+
+    model = load_realtime_stt_model()
+    segments, _ = model.transcribe(waveform, language="ko", task="transcribe")
+    return "".join(segment.text for segment in segments).strip()
