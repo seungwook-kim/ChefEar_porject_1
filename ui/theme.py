@@ -373,6 +373,17 @@ div.stButton > button[kind="primary"]:hover { background: var(--accent-dark); bo
   padding: 9px 16px; font-size: 12.5px; font-weight: 600; box-shadow: none; white-space: normal;
 }
 [class*="st-key-cs_demo_buttons"] div.stButton > button:hover { background: rgba(36,28,21,0.95); }
+
+/* 화면 전환(goto) 중 잠깐 끼워 넣는 로딩 스피너(.ce-loading) - 2026-08-20, "화면마다
+   로딩화면" 요청. 다른 중앙 정렬 화면들과 같은 render_spacer() 패턴으로 수직 중앙에 둔다. */
+.ce-loading { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; }
+.ce-spinner {
+  width:42px; height:42px; border-radius:50%;
+  border:4px solid var(--accent-soft); border-top-color: var(--accent);
+  animation: ce-spin 0.8s linear infinite;
+}
+.ce-loading p { margin:0; font-size:14px; font-weight:700; color: var(--text-secondary); }
+@keyframes ce-spin { to { transform: rotate(360deg); } }
 </style>
 """
 
@@ -408,10 +419,14 @@ ICON_QUESTION_CIRCLE = _SVG.format(
     body='<circle cx="12" cy="12" r="10"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.8.4-1.3 1-1.3 1.9"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
 )
 ICON_SPARKLE = _SVG.format(size=26, body='<path d="M12 3v6M12 15v6M3 12h6M15 12h6"/>')
-ICON_BASKET = _SVG.format(
-    size=21,
-    body='<path d="M3 11h18M12 3v3M7 5v1M17 5v1"/><path d="M4 11l1.2 8.4A2 2 0 0 0 7.2 21h9.6a2 2 0 0 0 2-1.6L20 11"/>',
-)
+_BASKET_BODY = '<path d="M3 11h18M12 3v3M7 5v1M17 5v1"/><path d="M4 11l1.2 8.4A2 2 0 0 0 7.2 21h9.6a2 2 0 0 0 2-1.6L20 11"/>'
+ICON_BASKET = _SVG.format(size=21, body=_BASKET_BODY)
+# 재료 이름별로 식재료 이모지를 하나씩 골라줄 파서가 없는 곳(실제 Supabase 조회 재료처럼
+# 자유 형식 텍스트라 재료명만으로 식재료 종류를 안정적으로 못 알아냄 - start.py의
+# _ingredients_text_to_chips() 참고)에서 재료 종류와 무관하게 두루 쓸 칩 아이콘.
+# 이전엔 모든 칩에 당근(🥕) 이모지를 그대로 썼는데, 스팸·떡처럼 안 맞는 음식에도 당근이
+# 붙어 보였다(2026-08-20, 사용자 지적) - 위 섹션 제목과 같은 바구니 아이콘을 작게 재사용.
+ICON_BASKET_SM = _SVG.format(size=14, body=_BASKET_BODY)
 _MIC_BODY = (
     '<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3Z"/>'
     '<path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>'
@@ -438,6 +453,22 @@ def render_spacer() -> None:
     바뀌어도 남는 공간 자체가 다시 계산되므로 항상 반응형으로 중앙 정렬된다.
     """
     st.markdown('<div class="ce-spacer"></div>', unsafe_allow_html=True)
+
+
+def render_loading_screen(message: str = "불러오는 중...") -> None:
+    """goto()로 화면을 전환할 때 실제 화면 대신 한 프레임 보여주는 스피너.
+
+    특히 진짜 백엔드를 붙인 화면(recipe_confirm의 handle_utterance 조회, cooking_step의
+    TTS 합성 등)으로 넘어갈 땐 다음 화면이 준비되기까지 몇 초씩 걸릴 수 있는데, 그 사이
+    화면이 그냥 멈춘 것처럼 비어 보이지 않도록 render_spacer()로 다른 중앙 정렬 화면과
+    같은 방식으로 화면 가운데에 띄운다(app.py의 두 단계 rerun 패턴과 짝을 이룸).
+    """
+    render_spacer()
+    st.markdown(
+        f'<div class="ce-loading"><div class="ce-spinner"></div><p>{message}</p></div>',
+        unsafe_allow_html=True,
+    )
+    render_spacer()
 
 
 def render_brand() -> None:

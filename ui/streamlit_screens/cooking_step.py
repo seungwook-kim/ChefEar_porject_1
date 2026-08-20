@@ -12,7 +12,6 @@ from mock_data import fresh_recipe
 from nav import goto
 from theme import (
     render_badge,
-    render_chat,
     render_chips,
     render_mic_bar_interactive,
     render_section_title,
@@ -44,25 +43,43 @@ def render() -> None:
 
     audio_file = current.get("audio")
     audio_path = _AUDIO_DIR / recipe["id"] / audio_file if audio_file else None
-    has_real_audio = audio_path is not None and audio_path.exists()
+    has_prebaked_audio = audio_path is not None and audio_path.exists()
 
-    # 진짜 오디오가 있으면 그 wav로 카드 안에 진짜 재생바를 넣고(audio_path), 없으면
-    # 장식용 정지 파형만 보여준다(theme.render_step_card() 참고).
-    render_step_card(total, step_number, current["text"], audio_path=audio_path if has_real_audio else None)
+    # 2026-08-20: 진짜 Supabase 레시피(source="supabase", start.py의 텍스트 입력 경로로
+    # 들어온 것)는 부대찌개처럼 미리 만들어둔 wav가 없다 — 대신 여기서 그때그때 합성해서
+    # 같은 ui/assets/audio/<recipe id>/ 폴더에 캐싱한다(파일명만 "0N.wav" 대신
+    # "{step_number:02d}.wav"). 한 번 만들면 다음에 이 단계로 돌아왔을 때 다시 안 만든다.
+    is_supabase_recipe = recipe.get("source") == "supabase"
+    realtime_audio_path = _AUDIO_DIR / str(recipe["id"]) / f"{step_number:02d}.wav" if is_supabase_recipe else None
+    has_realtime_audio = realtime_audio_path is not None and realtime_audio_path.exists()
 
-    if audio_file and not has_real_audio:
+    if is_supabase_recipe and not has_prebaked_audio and not has_realtime_audio:
+        # 부대찌개(미리 만들어둔 wav)처럼 버튼 없이 바로 재생바에 얹히길 원해서(2026-08-20),
+        # 이 단계에 처음 들어온 시점에 곧바로 합성한다 — 로컬 CPU 기준 문장당 최대 몇 분
+        # 걸릴 수 있어(2026-08-20 실측 239초/문장) 그 사이 스피너로 대기 안내만 해준다.
+        # 한 번 만들면 realtime_audio_path에 캐싱돼서 이 단계로 다시 돌아왔을 때는 안 만든다.
+        from tts.infer import tts_synthesize  # 지연 import — stt_tts_test.py와 같은 이유
+
+        with st.spinner("음성 합성 중이에요... 로컬 CPU라 오래 걸릴 수 있어요(최대 몇 분). 잠시만 기다려주세요."):
+            waveform, sample_rate = tts_synthesize(current["text"])
+        import soundfile as sf
+
+        realtime_audio_path.parent.mkdir(parents=True, exist_ok=True)
+        sf.write(realtime_audio_path, waveform, sample_rate)
+        has_realtime_audio = True
+
+    if has_prebaked_audio:
+        render_step_card(total, step_number, current["text"], audio_path=audio_path)
+    elif has_realtime_audio:
+        render_step_card(total, step_number, current["text"], audio_path=realtime_audio_path)
+    else:
+        render_step_card(total, step_number, current["text"], show_player=not is_supabase_recipe)
+
+    if audio_file and not has_prebaked_audio:
         st.caption(f"⚠️ 음성 파일 없음: {audio_path.relative_to(_AUDIO_DIR.parent.parent)}")
 
     render_section_title("오늘의 재료")
     render_chips(recipe["ingredients"], substituted_name=st.session_state.get("substituted_ingredient"))
-
-    # 아직 대체 등 상호작용이 없었을 때도(예: 1단계 진입 직후) 오늘의 재료↔듣는 중 사이에
-    # 대화 구역이 항상 보이도록, 비어있으면 기본 예시 대화로 대체한다.
-    chat = st.session_state.chat_log or [
-        ("user", "감자 대신 양파 넣어도 돼?"),
-        ("ai", "네, 양파로 대체했어요."),
-    ]
-    render_chat(chat)
 
     audio_input = render_mic_bar_interactive('"다음" · "다시" · "재료 바꾸기"')
     if audio_input is not None:
