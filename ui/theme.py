@@ -127,6 +127,22 @@ div.stTextInput input {
   border-radius: 14px; border: 1.5px solid var(--border); background: var(--surface-alt);
   color: var(--text); font-family: inherit;
 }
+div.stTextArea textarea {
+  border-radius: 14px; border: 1.5px solid var(--border); background: transparent;
+  color: var(--text); font-family: inherit;
+}
+/* 비밀번호 입력칸의 "표시/숨기기"(눈 모양) 토글 버튼 - Streamlit이 클래스명을
+   렌더링마다 새로 해시해서(st-emotion-cache-*) 클래스로는 못 짚고, 값이 고정인
+   aria-label(Show/Hide password)로 짚는다. 버튼 자체 배경은 원래도 투명이지만,
+   버튼을 감싸는 바로 위 div가 회색 배경(rgb(240,242,246))을 따로 갖고 있어서
+   버튼만 투명하게 해선 그 사각 회색 박스가 그대로 남는다 - 그 감싸는 div까지
+   :has()로 같이 짚어서 투명하게 만든다(실측 확인, 2026-08-21).*/
+button[aria-label="Show password"], button[aria-label="Hide password"] {
+  background: transparent; border: none; box-shadow: none;
+}
+div:has(> button[aria-label="Show password"]), div:has(> button[aria-label="Hide password"]) {
+  background: transparent; border: none;
+}
 
 .ce-back-link { display:inline-flex; align-items:center; gap:4px; font-size:13px; color: var(--text-secondary); font-weight:700; margin-bottom: 4px; }
 
@@ -156,6 +172,49 @@ div.stTextInput input {
   background: var(--surface); border-radius: 22px; padding: 22px 20px;
   box-shadow: 0 10px 24px rgba(36,28,21,0.07); gap: 14px;
 }
+
+/* 마이 레시피 목록의 레시피 한 건 카드 - cs_step_card와 같은 이유로(안에 실제
+   st.button이 들어가서 순수 HTML .ce-card로 못 감쌈) 진짜 컨테이너를 카드로 쓴다.
+   레시피마다 키가 다르니(st-key-my_recipe_card_<id>) 부분일치 선택자로 짚는다. */
+[data-testid="stVerticalBlock"][class*="st-key-my_recipe_card_"] {
+  background: var(--surface); border-radius: 18px; padding: 16px 18px;
+  box-shadow: 0 6px 16px rgba(36,28,21,0.06); gap: 6px;
+}
+.ce-recipe-name { display:flex; align-items:center; gap:8px; font-size:15px; font-weight:700; color: var(--text); }
+.ce-recipe-name .icon { color: var(--accent); display:inline-flex; }
+
+/* 마이 레시피 카드의 수정/삭제 버튼 두 개 - st.columns로 나누면 감싸는 칸이 넓어질
+   때마다 두 버튼도 같이 벌어져서(각자 칸의 절반씩 차지) 화면이 넓을수록 간격이
+   커지는 문제가 있었다(2026-08-21, 실측). 대신 세로 블록 하나(stVerticalBlock)에
+   버튼 둘을 넣고 여기서 가로 배치로 강제한다 - flex-shrink:0이라 칸이 넓어져도
+   버튼 자체 크기만큼만 차지하고, justify-content:flex-end로 오른쪽에 붙는다. */
+[data-testid="stVerticalBlock"][class*="st-key-my_recipe_actions_"] {
+  flex-direction: row; flex-wrap: nowrap; gap: 6px; justify-content: flex-end;
+  flex-shrink: 0; width: auto;
+}
+[data-testid="stVerticalBlock"][class*="st-key-my_recipe_actions_"] [data-testid="stElementContainer"] {
+  width: auto;
+}
+
+/* start 화면 상단 로그인 버튼 - 자기 칸 안에서 왼쪽에 붙어있던 걸 오른쪽 끝으로 민다. */
+[data-testid="stVerticalBlock"][class*="st-key-brand_login_wrap"] {
+  display: flex; align-items: flex-end; justify-content: flex-end;
+}
+
+/* 레시피 등록 · 조리 순서 화면(register_steps)에서 입력한 순서 목록 - 기존엔
+   "**1.** 문장"처럼 굵은 숫자 + 평문이라 밋밋했다(2026-08-21 지적). 재료 화면의
+   칩(.ce-chip)과 짝을 맞춰 순서도 카드형 줄로 - 원형 번호 배지 + 문장, 마이 레시피
+   카드(.ce-recipe-name)와 같은 둥근 배지 언어를 재사용한다. */
+.ce-step-list { display:flex; flex-direction:column; gap:8px; }
+.ce-step-row {
+  display:flex; align-items:flex-start; gap:12px; background: var(--surface);
+  border-radius:16px; padding:14px 16px; box-shadow: 0 4px 12px rgba(36,28,21,0.05);
+}
+.ce-step-num {
+  width:26px; height:26px; min-width:26px; border-radius:50%; background: var(--accent);
+  color:#fff; display:grid; place-items:center; font-weight:800; font-size:13px; margin-top:1px;
+}
+.ce-step-row p { margin:0; font-size:14.5px; line-height:1.55; color: var(--text); }
 
 .ce-dots { display:flex; justify-content:center; gap:9px; }
 .ce-dots .d { width:9px; height:9px; border-radius:50%; background: var(--border); }
@@ -236,9 +295,22 @@ div.stButton > button[kind="primary"]:hover { background: var(--accent-dark); bo
      반올림 오차를 줄인다. */
   transform: translateZ(0);
 }
-.ce-mic-icon { width:50px; height:50px; min-width:50px; border-radius:50%; display:grid; place-items:center; }
+.ce-mic-icon { width:50px; height:50px; min-width:50px; border-radius:50%; display:grid; place-items:center; position:relative; }
 .ce-mic-icon.listening { background: var(--accent); color:#fff; box-shadow: 0 0 0 7px rgba(238,123,54,0.16); }
 .ce-mic-icon.idle { background: var(--surface-alt); color: var(--accent); border:2px solid var(--border); }
+/* "듣는 중" 마이크가 정말 활성화된 것처럼 보이도록 링이 바깥으로 퍼지며 옅어지는
+   펄스 애니메이션 - 정적인 고리(box-shadow)만으로는 그냥 켜져있는 건지 실제로
+   듣고 있는 건지 구분이 안 된다는 지적으로 추가함(2026-08-21). idle 상태에는
+   안 붙는다(듣고 있지 않을 땐 펄스도 없어야 앞뒤가 맞음). */
+.ce-mic-icon.listening::after {
+  content:""; position:absolute; inset:-7px; border-radius:50%;
+  border:2px solid var(--accent); opacity:.6;
+  animation: ce-mic-pulse 1.6s ease-out infinite;
+}
+@keyframes ce-mic-pulse {
+  0% { transform: scale(1); opacity:.6; }
+  100% { transform: scale(1.6); opacity:0; }
+}
 .ce-mic-status .state { font-weight:800; color: var(--accent-dark); font-size:14.5px; display:block; }
 .ce-mic-status .hint { font-size:12px; color: var(--text-secondary); display:block; }
 
@@ -471,8 +543,24 @@ def render_loading_screen(message: str = "불러오는 중...") -> None:
     render_spacer()
 
 
-def render_brand() -> None:
-    st.markdown(f'<div class="ce-brand"><span class="icon">{ICON_POT}</span> ChefEar</div>', unsafe_allow_html=True)
+def render_brand(show_login: bool = False) -> bool:
+    """show_login=True면 "ChefEar" 제목과 같은 줄 오른쪽에 로그인 아이콘 버튼을 나란히
+    놓는다(2026-08-21, start 화면 요청 - 원래는 화면 쪽에서 별도 줄로 그렸었는데 제목과
+    안 나란해서 여기로 옮김). 로그인 내비게이션(goto)은 이 파일이 모르는 app.py 쪽
+    개념이라, 여기서는 버튼이 눌렸는지 bool만 돌려주고 실제 화면 전환은 호출부가 한다
+    (render_back_link()와 같은 패턴)."""
+    if not show_login:
+        st.markdown(f'<div class="ce-brand"><span class="icon">{ICON_POT}</span> ChefEar</div>', unsafe_allow_html=True)
+        return False
+    left, right = st.columns([6, 1])
+    with left:
+        st.markdown(f'<div class="ce-brand"><span class="icon">{ICON_POT}</span> ChefEar</div>', unsafe_allow_html=True)
+    with right:
+        # 버튼이 자기 칸 왼쪽에 붙어서 화면 오른쪽 끝까지 안 갔다(실측 지적,
+        # 2026-08-21) - my_recipe_actions_와 같은 방식으로 감싸는 세로 블록에
+        # justify-content:flex-end를 줘서 칸 안에서 오른쪽 끝으로 민다.
+        with st.container(key="brand_login_wrap"):
+            return st.button(":material/login:", key="brand_login_btn", help="로그인")
 
 
 def render_back_link(label: str = "처음으로", key: str = "ce_back_link") -> bool:
@@ -661,6 +749,23 @@ def render_audio_player(audio_path: str | Path, height: int = 64, nonce: int | s
         pause_icon_js=json.dumps(ICON_PAUSE),
     )
     st.iframe(html, height=height)
+
+
+def render_audio_autoplay(audio_path: str | Path, nonce: int | str = 0) -> None:
+    """재생바(원형 버튼+파형)는 안 보이고 음성만 자동재생되는, render_audio_player()의
+    화면 없는 버전. "저장이 완료됐어요!" 화면처럼 안내 문구를 음성으로만 들려주고
+    재생 컨트롤 자체는 화면에 남기고 싶지 않을 때 쓴다(2026-08-21).
+
+    height=1(최소값 — st.iframe은 0을 허용 안 함, StreamlitInvalidHeightError)이라
+    화면에 거의 자리를 차지하지 않지만, 안의 <audio autoplay>는 render_audio_player()와
+    똑같이 동작한다 — nonce로 매 호출마다 문자열을 다르게 만들어야 재렌더 시에도
+    프론트엔드가 iframe을 새로 마운트해 autoplay가 다시 실행된다(같은 이유는
+    render_audio_player() 문서 참고).
+    """
+    data = Path(audio_path).read_bytes()
+    audio_src = "data:audio/wav;base64," + base64.b64encode(data).decode("ascii")
+    html = f"<!-- replay-nonce:{nonce} -->\n<audio src=\"{audio_src}\" autoplay></audio>"
+    st.iframe(html, height=1)
 
 
 def render_step_card(

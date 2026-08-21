@@ -16,6 +16,7 @@ handle_utterance`) -> TTS(`tts.infer.tts_synthesize`) 재생까지 한 화면 �
 from __future__ import annotations
 
 import io
+import os
 import sys
 from pathlib import Path
 
@@ -31,16 +32,19 @@ from orchestration.db import get_client, load_env
 from orchestration.entity_extract import extract_substitution_ingredients
 from orchestration.entity_extract_llm import extract_dish_name_llm
 from orchestration.pipeline import get_precomputed_steps, handle_utterance, manual_fallback
-from orchestration.registration import register_recipe
+from orchestration.registration import delete_recipe, register_recipe, update_recipe
 
 from theme import (
+    ICON_BASKET_SM,
     ICON_CHECK_CIRCLE,
     ICON_CHECK_SMALL,
     ICON_QUESTION_CIRCLE,
     ICON_SPARKLE,
     ICON_X_CIRCLE,
     inject_css,
+    render_audio_autoplay,
     render_audio_player,
+    render_back_link,
     render_badge,
     render_big_mic,
     render_brand,
@@ -53,6 +57,15 @@ from theme import (
 )
 
 load_env()
+
+# 2026-08-21: 로그인 화면의 목업 계정 아이디/비밀번호가 소스에 리터럴로 박혀 있어서
+# (CWE-798, 하드코딩된 자격증명) PR 리뷰에서 거부됐다 — .env의 TEST_LOGIN_ID/
+# TEST_LOGIN_PASSWORD로 옮기고, 소스에는 값 자체를 남기지 않는다(다른 자격증명과
+# 같은 방식 — orchestration/db.py의 SUPABASE_URL/KEY, orchestration/identity.py의
+# COOKIE_SECRET 참고). .env에 없으면 로그인 화면 자체를 막는다(fallback으로 다시
+# 하드코딩된 기본값을 두면 같은 문제가 재발함).
+TEST_LOGIN_ID = os.environ.get("TEST_LOGIN_ID")
+TEST_LOGIN_PASSWORD = os.environ.get("TEST_LOGIN_PASSWORD")
 
 # 2026-08-21: st.audio()는 Streamlit이 rerun마다 <audio> 태그를 새로 만드는 방식이라
 # 자동재생은 물론 수동 재생 버튼도 안 먹히는 문제가 실측으로 확인됐다(브라우저에서 재생
@@ -84,6 +97,12 @@ def init_state() -> None:
     st.session_state.setdefault("chat_log", [])
     st.session_state.setdefault("recipe_view", None)  # {"recipe_id","dish_name","ingredients_raw","steps"}
     st.session_state.setdefault("pending_dish_name", None)  # no_match -> 등록 유도용
+    # 마이 레시피(로그인 -> 내가 등록한 레시피 목록 -> 수정/삭제) 관련 상태.
+    # logged_in은 목업 로그인(test/1234) 성공 여부만 기억한다 — 실제 회원 시스템이
+    # 아니라서 세션이 끝나면(브라우저 새로고침 등) 다시 로그인해야 한다.
+    st.session_state.setdefault("logged_in", False)
+    st.session_state.setdefault("editing_recipe_id", None)  # edit_recipe 화면이 수정 중인 레시피
+    st.session_state.setdefault("confirm_delete_id", None)  # my_recipes 화면의 삭제 확인 대상
     # listen()의 위젯 키에 붙는 턴 번호. text_input/audio_input 값은 Streamlit 세션에
     # 그대로 남아있어서, goto()의 st.rerun() 이후에도 "다음" 같은 이전 입력이 그대로
     # 다시 읽혀 process_utterance()가 무한 반복 호출되는 버그가 있었다(2026-08-19,
@@ -123,6 +142,34 @@ def get_owner_id() -> str | None:
 # ============================================================
 
 
+def _common_audio_path(message: str) -> Path:
+    """조리 단계처럼 recipe_id/step_number가 없는 1회성 문구(확인 질문·안내 등)의
+    캐시 경로 — 문구 자체의 해시를 키로 쓴다. speak()와 _render_cached_speech()가
+    같은 문구에 대해 항상 같은 경로를 계산해야 캐시가 서로 맞물린다."""
+    import hashlib
+
+    digest = hashlib.sha1(message.encode("utf-8")).hexdigest()[:16]
+    return _AUDIO_DIR / "_common" / f"{digest}.wav"
+
+
+def _render_cached_speech(message: str) -> None:
+    """speak()로 이미 이 문구를 말한 적 있다면(캐시 존재) 음성만 자동재생한다(재생바는 없음).
+
+    screen_cooking_step()과 같은 이유로 필요하다 — speak()가 그 자리에서 그리는
+    재생 위젯은 바로 뒤따르는 goto()의 st.rerun()에 지워진다. 그래서 이 문구로
+    전환해 들어온 화면 자신이 매번 다시 그려질 때도 캐시를 직접 찾아 재생해야
+    실제로 음성이 나온다. 캐시가 아직 없으면(예: speak() 실패) 조용히 아무것도 안
+    한다 — 화면 텍스트는 이미 위에 따로 표시돼 있어서다.
+
+    2026-08-21: "저장이 완료됐어요!" 화면에서 재생바(원형 버튼+파형)는 안 보이고
+    음성만 나오면 좋겠다는 요청으로 render_audio_player() 대신 화면 없는
+    render_audio_autoplay()를 쓴다.
+    """
+    path = _common_audio_path(message)
+    if path.exists():
+        render_audio_autoplay(path)
+
+
 def speak(message: str, *, recipe_id: str | None = None, step_number: int | None = None) -> None:
     """TTS로 응답을 재생하고 채팅 로그에 남긴다. 합성 실패는 조용히 삼키지 않는다(EC-05) —
     화면 텍스트는 항상 남고, 음성만 실패했다는 걸 사용자에게 알린다.
@@ -144,10 +191,7 @@ def speak(message: str, *, recipe_id: str | None = None, step_number: int | None
         if recipe_id and step_number:
             audio_path = _AUDIO_DIR / str(recipe_id) / f"{step_number:02d}.wav"
         else:
-            import hashlib
-
-            digest = hashlib.sha1(message.encode("utf-8")).hexdigest()[:16]
-            audio_path = _AUDIO_DIR / "_common" / f"{digest}.wav"
+            audio_path = _common_audio_path(message)
 
         if not audio_path.exists():
             from tts.infer import tts_synthesize
@@ -162,15 +206,20 @@ def speak(message: str, *, recipe_id: str | None = None, step_number: int | None
         st.warning(f"음성 재생에 실패했어요(텍스트는 위에 표시돼요): {exc}")
 
 
-def listen(key_prefix: str) -> str | None:
+def listen(key_prefix: str, *, show_mic: bool = True) -> str | None:
     """마이크 녹음 또는 텍스트 입력으로 발화 하나를 받는다.
 
     반환값이 None이면 아직 입력이 없거나(정상) 무음/인식 실패(EC-01)라는 뜻 — 호출부는
     아무 것도 안 하고 다음 rerun을 기다리면 된다. 마이크 권한이 없어도 텍스트 입력으로
     그대로 진행할 수 있다(EC-04).
+
+    show_mic=False면 실제 녹음 위젯(st.audio_input, "말씀해주세요" 라벨 + 녹음 버튼)을
+    안 그린다 — register_intro처럼 화면에 이미 "듣는 중" 표시줄이 따로 있어서 녹음
+    위젯까지 있으면 마이크 안내가 중복돼 보이는 화면에서 쓴다(2026-08-21). 텍스트
+    입력 대체 경로는 이 경우에도 그대로 남는다.
     """
     turn = st.session_state.input_turn
-    audio_file = st.audio_input("말씀해주세요", key=f"{key_prefix}_mic_{turn}")
+    audio_file = st.audio_input("말씀해주세요", key=f"{key_prefix}_mic_{turn}") if show_mic else None
     typed = st.text_input(
         "또는 텍스트로 입력",
         key=f"{key_prefix}_typed_{turn}",
@@ -273,15 +322,21 @@ def process_utterance(text: str) -> None:
         # "등록"/"정정" 의도인데 registration_step 없이 자유발화로 들어온 경우 등 —
         # 서비스를 죽이는 대신 신규 등록 유도 화면으로 안전하게 보낸다.
         st.session_state.pending_dish_name = dish_name_guess
-        speak("새 레시피 등록을 도와드릴게요.")
         goto("register_intro")
         return
 
     intent = result.get("intent")
 
     if intent == "미분류":
-        speak(result.get("fallback_message", "죄송해요, 잘 이해하지 못했어요."))
-        goto("unclassified")
+        # 문장 패턴 분류(classify_intent)가 "조회"로 못 알아들은 경우 전부 여기로 온다 —
+        # "분홍코끼리 어떻게 만들어?"처럼 LLM이 요리명을 뽑아낸 경우뿐 아니라, "111"처럼
+        # LLM조차 요리명으로 확신 못 해 dish_name_guess가 None인 경우도 포함한다.
+        # "잘 이해하지 못했어요"로 되묻고 끝내는 대신, 표준 데이터에 없는 요리일
+        # 가능성으로 보고 항상 등록 유도 화면으로 보낸다(2026-08-21 요청) — 등록
+        # 화면 자체가 "이 이름 맞아요?"로 다시 확인/수정을 받으므로, 여기서 추측이
+        # 틀려도 안전하다. LLM이 아무것도 못 뽑았으면 발화 원문을 그대로 짐작값으로 쓴다.
+        st.session_state.pending_dish_name = dish_name_guess or text.strip()
+        goto("register_intro")
         return
 
     if intent == "조회":
@@ -467,6 +522,21 @@ def screen_cooking_step() -> None:
     fallback_buttons("cooking_step")
 
 
+# ============================================================
+# 신규 등록 플로우(no_match -> register_intro -> ... -> complete) 안내 문구
+# ============================================================
+# register_recipe()가 돌려주는 prompt/summary는 대화 중간(재료·순서 누적)에만 있고,
+# 화면 전환 시점의 고정 안내문(인트로/순서 질문 등)은 없다 — 그 화면 자신이 자신의
+# 안내문을 "무슨 말을 했는지" 알아야 _render_cached_speech()로 같은 캐시를 다시 찾을
+# 수 있어서, 전환 직전(호출부)과 도착 화면 양쪽이 똑같이 이 함수들을 불러 쓴다.
+# (register_intro 자체는 2026-08-21부터 음성 안내를 뺐다 — 아래 screen_register_intro()
+# 참고. _register_intro_message()는 그때 쓰던 문구 생성 함수라 지금은 안 쓰지만, 다시
+# 음성을 붙일 수도 있어 남겨뒀었는데 완전히 안 쓰이는 게 확인돼 제거함.)
+
+
+_REGISTER_SAVED_MESSAGE = "저장이 완료됐어요!"
+
+
 def screen_no_match() -> None:
     render_spacer()
     st.markdown(f'<div class="ce-lead-icon warn">{ICON_X_CIRCLE}</div>', unsafe_allow_html=True)
@@ -518,6 +588,21 @@ def screen_register_intro() -> None:
         unsafe_allow_html=True,
     )
     render_spacer()
+    render_mic_bar("듣는 중", '"네" 또는 "등록할래요"라고 말해보세요', listening=True)
+
+    # 2026-08-21: 위 "듣는 중" 표시줄이 이미 마이크가 켜져 있다는 걸 보여주고 있어서,
+    # listen()이 따로 그리는 실제 녹음 위젯(제목 "말씀해주세요" + 녹음 버튼)까지 있으면
+    # 같은 화면에 마이크 관련 표시가 두 번 겹쳐 보인다는 지적이 있었다 — 일단 이 화면만
+    # show_mic=False로 꺼둔다(완전히 지우진 않음, 나중에 되돌릴 수 있게). 텍스트로
+    # "네, 등록할래요"/"괜찮아요"를 입력하는 대체 경로는 그대로 남아있다.
+    text = listen("register_intro", show_mic=False)
+    if text:
+        norm = text.strip().rstrip("?!. ")
+        if norm in ("네", "응", "좋아", "좋아요", "그래", "그래요", "등록", "등록할래요", "네, 등록할래요"):
+            get_owner_id()
+            goto("register_dish_name")
+        elif norm in ("아니", "아니요", "괜찮아", "괜찮아요", "취소"):
+            goto("start")
 
     c1, c2 = st.columns(2)
     with c1:
@@ -536,16 +621,29 @@ def screen_register_dish_name() -> None:
     st.markdown('<p class="ce-hint">새 레시피 등록 · 1 / 3 · 요리명</p>', unsafe_allow_html=True)
     render_dots(3, 1)
     st.markdown("**어떤 요리인가요?**")
+    if st.session_state.pending_dish_name:
+        st.caption(f'짐작한 이름: "{st.session_state.pending_dish_name}" — 맞으면 "네", 다르면 이름을 말씀해주세요')
+    render_mic_bar("듣는 중", "요리 이름을 말씀해주세요", listening=True)
 
-    dish_name = st.text_input(
-        "요리명", value=st.session_state.pending_dish_name or "", key="reg_dish_name_input"
-    )
-    if st.button("다음", type="primary", use_container_width=True):
-        if not dish_name.strip():
-            st.warning("요리 이름을 입력해주세요.")
+    # register_intro와 같은 이유로(2026-08-21) 실제 녹음 위젯("말씀해주세요" 박스)은
+    # 일단 꺼둔다 - 위 "듣는 중" 아이콘이 펄스 애니메이션으로 이미 마이크가 활성화된
+    # 상태를 보여주고 있어서, 텍스트 대체 입력만으로 충분하다고 판단됨.
+    text = listen("register_dish_name", show_mic=False)
+    if text:
+        norm = text.strip().rstrip("?!. ")
+        if norm in ("네", "응", "맞아", "맞아요", "그래", "그래요") and st.session_state.pending_dish_name:
+            dish_name = st.session_state.pending_dish_name
         else:
-            register_recipe(st.session_state.pipeline_session, "dish_name", dish_name.strip(), client=get_client())
-            goto("register_ingredients")
+            dish_name = text.strip()
+        # 2026-08-21: 여기서 speak(result["prompt"])로 음성 합성을 하고 있었지만, 그
+        # 재생 위젯은 바로 뒤 goto()의 st.rerun()에 지워지고, 도착 화면인
+        # register_ingredients는 텍스트 입력 전용(마이크 바·재생바 없음)이라 이 안내문을
+        # _render_cached_speech()로 다시 보여주지도 않는다. chat_log에도 남지만 등록
+        # 화면들은 render_chat()을 안 써서 그것도 어차피 안 보인다 — 즉 매번 로컬 CPU로
+        # 몇 분씩 걸리는 합성을 하고도 아무도 못 듣는 죽은 호출이라 제거했다.
+        register_recipe(st.session_state.pipeline_session, "dish_name", dish_name, client=get_client())
+        goto("register_ingredients")
+
     if st.button("취소", use_container_width=True):
         goto("register_intro")
 
@@ -561,6 +659,8 @@ def screen_register_ingredients() -> None:
     st.markdown("**재료를 알려주세요**")
     render_chips([{"name": ing, "qty": "", "emoji": "🥄"} for ing in reg["ingredients"]])
 
+    # 2026-08-21: 이 화면은 텍스트 입력 전용으로 되돌렸다 — STT/TTS(마이크 바·재생바·
+    # listen())를 붙였던 버전 대신, 원래의 순수 텍스트 폼(요청받은 화면 그대로)을 쓴다.
     new_item = st.text_input("재료 추가(쉼표로 여러 개 가능)", key="reg_ing_new", placeholder="예: 두부, 감자")
     if st.button("추가") and new_item.strip():
         items = [x.strip() for x in new_item.split(",") if x.strip()]
@@ -580,9 +680,14 @@ def screen_register_steps() -> None:
     st.markdown(f'<p class="ce-hint">{reg["dish_name"]} · 3 / 3 · 조리 순서</p>', unsafe_allow_html=True)
     render_dots(3, 3)
     st.markdown("**조리 순서를 알려주세요**")
-    for i, step_text in enumerate(reg["instructions"], start=1):
-        st.markdown(f"**{i}.** {step_text}")
+    if reg["instructions"]:
+        steps_html = "".join(
+            f'<div class="ce-step-row"><span class="ce-step-num">{i}</span><p>{step_text}</p></div>'
+            for i, step_text in enumerate(reg["instructions"], start=1)
+        )
+        st.markdown(f'<div class="ce-step-list">{steps_html}</div>', unsafe_allow_html=True)
 
+    # register_ingredients와 같은 이유로(2026-08-21) 텍스트 입력 전용으로 되돌렸다.
     new_step = st.text_input("순서 추가", key="reg_step_new", placeholder="새 단계 추가")
     if st.button("단계 추가") and new_step.strip():
         register_recipe(st.session_state.pipeline_session, "instructions", [new_step.strip()], client=get_client())
@@ -590,6 +695,7 @@ def screen_register_steps() -> None:
 
     if reg["instructions"] and st.button("네, 저장할게요", type="primary", use_container_width=True):
         register_recipe(st.session_state.pipeline_session, "confirm", None, client=get_client())
+        speak(_REGISTER_SAVED_MESSAGE)
         goto("complete")
 
 
@@ -602,9 +708,9 @@ def screen_complete() -> None:
         f"<p>{dish_name}, 다음에 다시 찾으면 회원님 버전으로 먼저 안내해드릴게요.</p></div>",
         unsafe_allow_html=True,
     )
+    _render_cached_speech(_REGISTER_SAVED_MESSAGE)
     st.markdown(
         '<div style="text-align:center;">'
-        f'<span class="ce-status-badge">{ICON_CHECK_SMALL} 원본 레시피 보존됨</span>'
         f'<span class="ce-status-badge">{ICON_CHECK_SMALL} 나만의 레시피로 저장됨</span></div>',
         unsafe_allow_html=True,
     )
@@ -618,6 +724,153 @@ def screen_complete() -> None:
         goto("start")
 
 
+# ============================================================
+# 마이 레시피(로그인 -> 내가 등록한 레시피 목록 -> 수정/삭제)
+# ============================================================
+# 목업 로그인이다 — 실제 회원가입/비밀번호 저장 없이 .env의 TEST_LOGIN_ID/
+# TEST_LOGIN_PASSWORD 계정 하나만으로 확인한다(2026-08-21, 소스 하드코딩 제거).
+# 이 로그인은 FR-08의 쿠키 owner_id(누가 어떤
+# user_custom을 등록했는지 익명 식별)와는 별개 개념이라, 로그인 성공 후 보여주는
+# "내가 등록한 레시피"는 계정별로 걸러내지 않고 source="user_custom"인 레시피 전체를
+# 보여준다 — 목업 계정이 하나뿐이라 계정별 소유권을 구분할 방법 자체가 없어서다.
+
+
+def screen_login() -> None:
+    if render_back_link("첫화면으로 가기"):
+        goto("start")
+
+    render_spacer()
+    st.markdown(
+        '<div class="ce-center"><h1>로그인</h1>'
+        "<p>등록한 레시피를 관리하려면 로그인해주세요.</p></div>",
+        unsafe_allow_html=True,
+    )
+    render_spacer()
+
+    if not TEST_LOGIN_ID or not TEST_LOGIN_PASSWORD:
+        st.error("로그인이 아직 설정되지 않았어요 — .env에 TEST_LOGIN_ID/TEST_LOGIN_PASSWORD를 채워주세요.")
+        return
+
+    user_id = st.text_input("아이디", key="login_id_input")
+    password = st.text_input("비밀번호", type="password", key="login_pw_input")
+    if st.button("로그인", type="primary", use_container_width=True):
+        if user_id == TEST_LOGIN_ID and password == TEST_LOGIN_PASSWORD:
+            st.session_state.logged_in = True
+            goto("my_recipes")
+        else:
+            st.error("아이디 또는 비밀번호가 올바르지 않아요.")
+
+
+def screen_my_recipes() -> None:
+    if not st.session_state.logged_in:
+        goto("login")
+        return
+    if render_back_link("첫화면으로 가기"):
+        goto("start")
+
+    client = get_client()
+    rows = (
+        client.table("recipes")
+        .select("id,dish_name,created_at")
+        .eq("source", "user_custom")
+        .order("created_at", desc=True)
+        .execute()
+        .data
+    )
+
+    render_badge(f"내가 등록한 레시피 · {len(rows)}개")
+
+    if not rows:
+        st.info("아직 등록한 레시피가 없어요.")
+        return
+
+    confirm_id = st.session_state.confirm_delete_id
+    for row in rows:
+        with st.container(key=f"my_recipe_card_{row['id']}"):
+            c1, c_actions = st.columns([5, 2])
+            with c1:
+                st.markdown(
+                    f'<div class="ce-recipe-name"><span class="icon">{ICON_BASKET_SM}</span>{row["dish_name"]}</div>',
+                    unsafe_allow_html=True,
+                )
+            with c_actions:
+                # st.columns([1,1])는 c_actions 칸 자체가 넓어지면 두 버튼도 같이
+                # 벌어진다(각 컬럼이 그 절반씩을 차지) - 화면이 넓을수록 간격이
+                # 커지는 문제가 실측으로 확인됐다(2026-08-21). 컬럼 대신 세로
+                # 블록 하나에 버튼 둘을 넣고 CSS로 가로 정렬 + 오른쪽 붙임
+                # 처리해서, 화면 폭과 무관하게 항상 붙어있게 한다.
+                with st.container(key=f"my_recipe_actions_{row['id']}"):
+                    if st.button(":material/edit:", key=f"edit_{row['id']}", help="수정"):
+                        st.session_state.editing_recipe_id = row["id"]
+                        goto("edit_recipe")
+                    if st.button(":material/delete:", key=f"delete_{row['id']}", help="삭제"):
+                        st.session_state.confirm_delete_id = row["id"]
+                        st.rerun()
+
+            if confirm_id == row["id"]:
+                st.warning(f'"{row["dish_name"]}"를 정말 삭제할까요? 되돌릴 수 없어요.')
+                cc1, cc2 = st.columns(2)
+                with cc1:
+                    if st.button(
+                        "네, 삭제할게요", key=f"confirm_delete_{row['id']}", type="primary", use_container_width=True
+                    ):
+                        delete_recipe(row["id"], client=client)
+                        st.session_state.confirm_delete_id = None
+                        st.rerun()
+                with cc2:
+                    if st.button("취소", key=f"cancel_delete_{row['id']}", use_container_width=True):
+                        st.session_state.confirm_delete_id = None
+                        st.rerun()
+
+
+def screen_edit_recipe() -> None:
+    recipe_id = st.session_state.editing_recipe_id
+    if not recipe_id:
+        goto("my_recipes")
+        return
+
+    client = get_client()
+    recipe = client.table("recipes").select("*").eq("id", recipe_id).single().execute().data
+    steps = (
+        client.table("recipe_steps")
+        .select("step_number,step_text")
+        .eq("recipe_id", recipe_id)
+        .order("step_number")
+        .execute()
+        .data
+    )
+
+    if render_back_link("첫화면으로 가기"):
+        st.session_state.editing_recipe_id = None
+        goto("start")
+
+    st.markdown(f'**{recipe["dish_name"]} 수정**')
+
+    dish_name = st.text_input("요리명", value=recipe["dish_name"], key="edit_dish_name")
+    ingredients_text = st.text_area(
+        "재료 (쉼표로 구분)", value=recipe.get("ingredients") or "", key="edit_ingredients"
+    )
+    instructions_text = st.text_area(
+        "조리 순서 (한 줄에 한 단계씩)",
+        value="\n".join(s["step_text"] for s in steps),
+        key="edit_instructions",
+        height=200,
+    )
+
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("저장", type="primary", use_container_width=True):
+            ingredients = [x.strip() for x in ingredients_text.split(",") if x.strip()]
+            instructions = [x.strip() for x in instructions_text.split("\n") if x.strip()]
+            update_recipe(recipe_id, dish_name.strip(), ingredients, instructions, client=client)
+            st.session_state.editing_recipe_id = None
+            goto("my_recipes")
+    with c2:
+        if st.button("취소", use_container_width=True):
+            st.session_state.editing_recipe_id = None
+            goto("my_recipes")
+
+
 SCREENS = {
     "start": screen_start,
     "recipe_confirm": screen_recipe_confirm,
@@ -629,6 +882,9 @@ SCREENS = {
     "register_ingredients": screen_register_ingredients,
     "register_steps": screen_register_steps,
     "complete": screen_complete,
+    "login": screen_login,
+    "my_recipes": screen_my_recipes,
+    "edit_recipe": screen_edit_recipe,
 }
 
 
@@ -636,7 +892,9 @@ def main() -> None:
     st.set_page_config(page_title="ChefEar", page_icon="🍲", layout="centered", initial_sidebar_state="collapsed")
     init_state()
     inject_css()
-    render_brand()
+    # 로그인 아이콘은 start 화면에서만 "ChefEar" 제목과 나란히 보여준다(2026-08-21 요청).
+    if render_brand(show_login=(st.session_state.screen == "start")):
+        goto("login")
     SCREENS[st.session_state.screen]()
 
 
