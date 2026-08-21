@@ -30,9 +30,16 @@ import streamlit as st
 from orchestration.db import get_client, load_env
 from orchestration.entity_extract import extract_dish_name, extract_substitution_ingredients
 from orchestration.pipeline import get_precomputed_steps, handle_utterance, manual_fallback
-from orchestration.registration import register_recipe
+from orchestration.registration import (
+    _final_summary,
+    _ingredient_summary,
+    delete_recipe,
+    register_recipe,
+    update_recipe,
+)
 
 from theme import (
+    ICON_BASKET_SM,
     ICON_CHECK_CIRCLE,
     ICON_CHECK_SMALL,
     ICON_QUESTION_CIRCLE,
@@ -40,6 +47,7 @@ from theme import (
     ICON_X_CIRCLE,
     inject_css,
     render_audio_player,
+    render_back_link,
     render_badge,
     render_big_mic,
     render_brand,
@@ -83,6 +91,12 @@ def init_state() -> None:
     st.session_state.setdefault("chat_log", [])
     st.session_state.setdefault("recipe_view", None)  # {"recipe_id","dish_name","ingredients_raw","steps"}
     st.session_state.setdefault("pending_dish_name", None)  # no_match -> 등록 유도용
+    # 마이 레시피(로그인 -> 내가 등록한 레시피 목록 -> 수정/삭제) 관련 상태.
+    # logged_in은 목업 로그인(test/1234) 성공 여부만 기억한다 — 실제 회원 시스템이
+    # 아니라서 세션이 끝나면(브라우저 새로고침 등) 다시 로그인해야 한다.
+    st.session_state.setdefault("logged_in", False)
+    st.session_state.setdefault("editing_recipe_id", None)  # edit_recipe 화면이 수정 중인 레시피
+    st.session_state.setdefault("confirm_delete_id", None)  # my_recipes 화면의 삭제 확인 대상
     # listen()의 위젯 키에 붙는 턴 번호. text_input/audio_input 값은 Streamlit 세션에
     # 그대로 남아있어서, goto()의 st.rerun() 이후에도 "다음" 같은 이전 입력이 그대로
     # 다시 읽혀 process_utterance()가 무한 반복 호출되는 버그가 있었다(2026-08-19,
@@ -122,6 +136,30 @@ def get_owner_id() -> str | None:
 # ============================================================
 
 
+def _common_audio_path(message: str) -> Path:
+    """조리 단계처럼 recipe_id/step_number가 없는 1회성 문구(확인 질문·안내 등)의
+    캐시 경로 — 문구 자체의 해시를 키로 쓴다. speak()와 _render_cached_speech()가
+    같은 문구에 대해 항상 같은 경로를 계산해야 캐시가 서로 맞물린다."""
+    import hashlib
+
+    digest = hashlib.sha1(message.encode("utf-8")).hexdigest()[:16]
+    return _AUDIO_DIR / "_common" / f"{digest}.wav"
+
+
+def _render_cached_speech(message: str) -> None:
+    """speak()로 이미 이 문구를 말한 적 있다면(캐시 존재) 재생바를 다시 그린다.
+
+    screen_cooking_step()과 같은 이유로 필요하다 — speak()가 그 자리에서 그리는
+    재생 위젯은 바로 뒤따르는 goto()의 st.rerun()에 지워진다. 그래서 이 문구로
+    전환해 들어온 화면 자신이 매번 다시 그려질 때도 캐시를 직접 찾아 보여줘야
+    실제로 화면에 남아있는 재생바가 된다. 캐시가 아직 없으면(예: speak() 실패)
+    조용히 아무것도 안 그린다 — 화면 텍스트는 이미 위에 따로 표시돼 있어서다.
+    """
+    path = _common_audio_path(message)
+    if path.exists():
+        render_audio_player(path)
+
+
 def speak(message: str, *, recipe_id: str | None = None, step_number: int | None = None) -> None:
     """TTS로 응답을 재생하고 채팅 로그에 남긴다. 합성 실패는 조용히 삼키지 않는다(EC-05) —
     화면 텍스트는 항상 남고, 음성만 실패했다는 걸 사용자에게 알린다.
@@ -143,10 +181,7 @@ def speak(message: str, *, recipe_id: str | None = None, step_number: int | None
         if recipe_id and step_number:
             audio_path = _AUDIO_DIR / str(recipe_id) / f"{step_number:02d}.wav"
         else:
-            import hashlib
-
-            digest = hashlib.sha1(message.encode("utf-8")).hexdigest()[:16]
-            audio_path = _AUDIO_DIR / "_common" / f"{digest}.wav"
+            audio_path = _common_audio_path(message)
 
         if not audio_path.exists():
             from tts.infer import tts_synthesize
@@ -273,7 +308,7 @@ def process_utterance(text: str) -> None:
         # "등록"/"정정" 의도인데 registration_step 없이 자유발화로 들어온 경우 등 —
         # 서비스를 죽이는 대신 신규 등록 유도 화면으로 안전하게 보낸다.
         st.session_state.pending_dish_name = dish_name_guess
-        speak("새 레시피 등록을 도와드릴게요.")
+        speak(_register_intro_message())
         goto("register_intro")
         return
 
@@ -467,6 +502,25 @@ def screen_cooking_step() -> None:
     fallback_buttons("cooking_step")
 
 
+# ============================================================
+# 신규 등록 플로우(no_match -> register_intro -> ... -> complete) 안내 문구
+# ============================================================
+# register_recipe()가 돌려주는 prompt/summary는 대화 중간(재료·순서 누적)에만 있고,
+# 화면 전환 시점의 고정 안내문(인트로/순서 질문 등)은 없다 — 그 화면 자신이 자신의
+# 안내문을 "무슨 말을 했는지" 알아야 _render_cached_speech()로 같은 캐시를 다시 찾을
+# 수 있어서, 전환 직전(호출부)과 도착 화면 양쪽이 똑같이 이 함수들을 불러 쓴다.
+
+
+def _register_intro_message() -> str:
+    dish_hint = st.session_state.pending_dish_name or "그 요리"
+    return f"{dish_hint}는 표준 레시피 안에는 없지만, 직접 알려주시면 회원님 레시피로 등록해드릴게요. 등록할까요?"
+
+
+_REGISTER_DISH_NAME_PROMPT = "어떤 요리인가요? 요리 이름을 말씀해주세요."
+_REGISTER_STEPS_PROMPT = "조리 순서를 알려주세요. 한 단계씩 말씀해주시면 돼요."
+_REGISTER_SAVED_MESSAGE = "저장이 완료됐어요!"
+
+
 def screen_no_match() -> None:
     render_spacer()
     st.markdown(f'<div class="ce-lead-icon warn">{ICON_X_CIRCLE}</div>', unsafe_allow_html=True)
@@ -487,6 +541,7 @@ def screen_no_match() -> None:
             goto("cooking_step")
     with c2:
         if st.button("새 레시피로 등록할래요", use_container_width=True):
+            speak(_register_intro_message())
             goto("register_intro")
 
 
@@ -517,12 +572,25 @@ def screen_register_intro() -> None:
         f"<p>{dish_hint}는 표준 레시피 안에는 없지만, 직접 알려주시면 회원님 레시피로 등록해드릴게요.</p></div>",
         unsafe_allow_html=True,
     )
+    _render_cached_speech(_register_intro_message())
     render_spacer()
+    render_mic_bar("듣는 중", '"네" 또는 "등록할래요"라고 말해보세요', listening=True)
+
+    text = listen("register_intro")
+    if text:
+        norm = text.strip().rstrip("?!. ")
+        if norm in ("네", "응", "좋아", "좋아요", "그래", "그래요", "등록", "등록할래요", "네, 등록할래요"):
+            get_owner_id()
+            speak(_REGISTER_DISH_NAME_PROMPT)
+            goto("register_dish_name")
+        elif norm in ("아니", "아니요", "괜찮아", "괜찮아요", "취소"):
+            goto("start")
 
     c1, c2 = st.columns(2)
     with c1:
         if st.button("네, 등록할래요", type="primary", use_container_width=True):
             get_owner_id()
+            speak(_REGISTER_DISH_NAME_PROMPT)
             goto("register_dish_name")
     with c2:
         if st.button("괜찮아요", use_container_width=True):
@@ -536,16 +604,22 @@ def screen_register_dish_name() -> None:
     st.markdown('<p class="ce-hint">새 레시피 등록 · 1 / 3 · 요리명</p>', unsafe_allow_html=True)
     render_dots(3, 1)
     st.markdown("**어떤 요리인가요?**")
+    if st.session_state.pending_dish_name:
+        st.caption(f'짐작한 이름: "{st.session_state.pending_dish_name}" — 맞으면 "네", 다르면 이름을 말씀해주세요')
+    _render_cached_speech(_REGISTER_DISH_NAME_PROMPT)
+    render_mic_bar("듣는 중", "요리 이름을 말씀해주세요", listening=True)
 
-    dish_name = st.text_input(
-        "요리명", value=st.session_state.pending_dish_name or "", key="reg_dish_name_input"
-    )
-    if st.button("다음", type="primary", use_container_width=True):
-        if not dish_name.strip():
-            st.warning("요리 이름을 입력해주세요.")
+    text = listen("register_dish_name")
+    if text:
+        norm = text.strip().rstrip("?!. ")
+        if norm in ("네", "응", "맞아", "맞아요", "그래", "그래요") and st.session_state.pending_dish_name:
+            dish_name = st.session_state.pending_dish_name
         else:
-            register_recipe(st.session_state.pipeline_session, "dish_name", dish_name.strip(), client=get_client())
-            goto("register_ingredients")
+            dish_name = text.strip()
+        result = register_recipe(st.session_state.pipeline_session, "dish_name", dish_name, client=get_client())
+        speak(result["prompt"])
+        goto("register_ingredients")
+
     if st.button("취소", use_container_width=True):
         goto("register_intro")
 
@@ -560,14 +634,31 @@ def screen_register_ingredients() -> None:
     render_dots(3, 2)
     st.markdown("**재료를 알려주세요**")
     render_chips([{"name": ing, "qty": "", "emoji": "🥄"} for ing in reg["ingredients"]])
+    if reg["ingredients"]:
+        _render_cached_speech(_ingredient_summary(reg["ingredients"]))
+    render_mic_bar("듣는 중", '재료를 말씀해주세요 (다 됐으면 "맞아요")', listening=True)
 
-    new_item = st.text_input("재료 추가(쉼표로 여러 개 가능)", key="reg_ing_new", placeholder="예: 두부, 감자")
-    if st.button("추가") and new_item.strip():
-        items = [x.strip() for x in new_item.split(",") if x.strip()]
-        register_recipe(st.session_state.pipeline_session, "ingredients", items, client=get_client())
-        st.rerun()
+    text = listen("register_ingredients")
+    if text:
+        norm = text.strip().rstrip("?!. ")
+        is_confirm = norm in ("네", "응", "맞아요", "됐어요", "다 됐어요", "그래요")
+        if is_confirm and reg["ingredients"]:
+            speak(_REGISTER_STEPS_PROMPT)
+            goto("register_steps")
+        elif is_confirm:
+            # 재료를 하나도 안 넣은 채로 확인 발화만 온 경우 — "맞아요"를 재료로
+            # 잘못 등록하지도, 다음 화면으로 그냥 넘기지도 않는다. 대신 왜 안
+            # 넘어가는지 화면에 분명히 알려준다(전에는 여기서 아무 반응 없이
+            # 조용히 무시돼서 먹통처럼 보이는 문제가 있었다, 2026-08-21).
+            st.warning('아직 재료를 안 알려주셨어요. 재료를 먼저 말씀해주세요.')
+        else:
+            items = [x.strip() for x in text.split(",") if x.strip()]
+            result = register_recipe(st.session_state.pipeline_session, "ingredients", items, client=get_client())
+            speak(result["summary"])
+            st.rerun()
 
     if reg["ingredients"] and st.button("네, 맞아요", type="primary", use_container_width=True):
+        speak(_REGISTER_STEPS_PROMPT)
         goto("register_steps")
 
 
@@ -582,14 +673,32 @@ def screen_register_steps() -> None:
     st.markdown("**조리 순서를 알려주세요**")
     for i, step_text in enumerate(reg["instructions"], start=1):
         st.markdown(f"**{i}.** {step_text}")
+    if reg["instructions"]:
+        _render_cached_speech(_final_summary(reg["ingredients"], reg["instructions"]))
+    render_mic_bar("듣는 중", '한 단계씩 말씀해주세요 (다 됐으면 "저장해줘")', listening=True)
 
-    new_step = st.text_input("순서 추가", key="reg_step_new", placeholder="새 단계 추가")
-    if st.button("단계 추가") and new_step.strip():
-        register_recipe(st.session_state.pipeline_session, "instructions", [new_step.strip()], client=get_client())
-        st.rerun()
+    text = listen("register_steps")
+    if text:
+        norm = text.strip().rstrip("?!. ")
+        is_confirm = norm in ("네", "응", "저장", "저장해줘", "저장할게요", "맞아요")
+        if is_confirm and reg["instructions"]:
+            register_recipe(st.session_state.pipeline_session, "confirm", None, client=get_client())
+            speak(_REGISTER_SAVED_MESSAGE)
+            goto("complete")
+        elif is_confirm:
+            # register_ingredients와 같은 이유 — 순서를 하나도 안 넣은 채 "저장해줘"만
+            # 오면 조용히 무시하지 않고 왜 안 되는지 알려준다.
+            st.warning("아직 조리 순서를 안 알려주셨어요. 순서를 먼저 말씀해주세요.")
+        else:
+            result = register_recipe(
+                st.session_state.pipeline_session, "instructions", [text.strip()], client=get_client()
+            )
+            speak(result["summary"])
+            st.rerun()
 
     if reg["instructions"] and st.button("네, 저장할게요", type="primary", use_container_width=True):
         register_recipe(st.session_state.pipeline_session, "confirm", None, client=get_client())
+        speak(_REGISTER_SAVED_MESSAGE)
         goto("complete")
 
 
@@ -602,6 +711,7 @@ def screen_complete() -> None:
         f"<p>{dish_name}, 다음에 다시 찾으면 회원님 버전으로 먼저 안내해드릴게요.</p></div>",
         unsafe_allow_html=True,
     )
+    _render_cached_speech(_REGISTER_SAVED_MESSAGE)
     st.markdown(
         '<div style="text-align:center;">'
         f'<span class="ce-status-badge">{ICON_CHECK_SMALL} 원본 레시피 보존됨</span>'
@@ -618,6 +728,144 @@ def screen_complete() -> None:
         goto("start")
 
 
+# ============================================================
+# 마이 레시피(로그인 -> 내가 등록한 레시피 목록 -> 수정/삭제)
+# ============================================================
+# 목업 로그인이다 — 실제 회원가입/비밀번호 저장 없이 아이디 "test"/비밀번호 "1234"
+# 하나만 하드코딩해서 확인한다. 이 로그인은 FR-08의 쿠키 owner_id(누가 어떤
+# user_custom을 등록했는지 익명 식별)와는 별개 개념이라, 로그인 성공 후 보여주는
+# "내가 등록한 레시피"는 계정별로 걸러내지 않고 source="user_custom"인 레시피 전체를
+# 보여준다 — 목업 계정이 하나뿐이라 계정별 소유권을 구분할 방법 자체가 없어서다.
+
+
+def screen_login() -> None:
+    if render_back_link("첫화면으로 가기"):
+        goto("start")
+
+    render_spacer()
+    st.markdown(
+        '<div class="ce-center"><h1>로그인</h1>'
+        "<p>등록한 레시피를 관리하려면 로그인해주세요.</p></div>",
+        unsafe_allow_html=True,
+    )
+    st.caption("테스트 계정: 아이디 test / 비밀번호 1234")
+    render_spacer()
+
+    user_id = st.text_input("아이디", key="login_id_input")
+    password = st.text_input("비밀번호", type="password", key="login_pw_input")
+    if st.button("로그인", type="primary", use_container_width=True):
+        if user_id == "test" and password == "1234":
+            st.session_state.logged_in = True
+            goto("my_recipes")
+        else:
+            st.error("아이디 또는 비밀번호가 올바르지 않아요.")
+
+
+def screen_my_recipes() -> None:
+    if not st.session_state.logged_in:
+        goto("login")
+        return
+    if render_back_link("첫화면으로 가기"):
+        goto("start")
+
+    client = get_client()
+    rows = (
+        client.table("recipes")
+        .select("id,dish_name,created_at")
+        .eq("source", "user_custom")
+        .order("created_at", desc=True)
+        .execute()
+        .data
+    )
+
+    render_badge(f"내가 등록한 레시피 · {len(rows)}개")
+
+    if not rows:
+        st.info("아직 등록한 레시피가 없어요.")
+        return
+
+    confirm_id = st.session_state.confirm_delete_id
+    for row in rows:
+        with st.container(key=f"my_recipe_card_{row['id']}"):
+            c1, c2, c3 = st.columns([6, 1, 1])
+            with c1:
+                st.markdown(
+                    f'<div class="ce-recipe-name"><span class="icon">{ICON_BASKET_SM}</span>{row["dish_name"]}</div>',
+                    unsafe_allow_html=True,
+                )
+            with c2:
+                if st.button(":material/edit:", key=f"edit_{row['id']}", help="수정"):
+                    st.session_state.editing_recipe_id = row["id"]
+                    goto("edit_recipe")
+            with c3:
+                if st.button(":material/delete:", key=f"delete_{row['id']}", help="삭제"):
+                    st.session_state.confirm_delete_id = row["id"]
+                    st.rerun()
+
+            if confirm_id == row["id"]:
+                st.warning(f'"{row["dish_name"]}"를 정말 삭제할까요? 되돌릴 수 없어요.')
+                cc1, cc2 = st.columns(2)
+                with cc1:
+                    if st.button(
+                        "네, 삭제할게요", key=f"confirm_delete_{row['id']}", type="primary", use_container_width=True
+                    ):
+                        delete_recipe(row["id"], client=client)
+                        st.session_state.confirm_delete_id = None
+                        st.rerun()
+                with cc2:
+                    if st.button("취소", key=f"cancel_delete_{row['id']}", use_container_width=True):
+                        st.session_state.confirm_delete_id = None
+                        st.rerun()
+
+
+def screen_edit_recipe() -> None:
+    recipe_id = st.session_state.editing_recipe_id
+    if not recipe_id:
+        goto("my_recipes")
+        return
+
+    client = get_client()
+    recipe = client.table("recipes").select("*").eq("id", recipe_id).single().execute().data
+    steps = (
+        client.table("recipe_steps")
+        .select("step_number,step_text")
+        .eq("recipe_id", recipe_id)
+        .order("step_number")
+        .execute()
+        .data
+    )
+
+    if render_back_link("첫화면으로 가기"):
+        st.session_state.editing_recipe_id = None
+        goto("start")
+
+    st.markdown(f'**{recipe["dish_name"]} 수정**')
+
+    dish_name = st.text_input("요리명", value=recipe["dish_name"], key="edit_dish_name")
+    ingredients_text = st.text_area(
+        "재료 (쉼표로 구분)", value=recipe.get("ingredients") or "", key="edit_ingredients"
+    )
+    instructions_text = st.text_area(
+        "조리 순서 (한 줄에 한 단계씩)",
+        value="\n".join(s["step_text"] for s in steps),
+        key="edit_instructions",
+        height=200,
+    )
+
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("저장", type="primary", use_container_width=True):
+            ingredients = [x.strip() for x in ingredients_text.split(",") if x.strip()]
+            instructions = [x.strip() for x in instructions_text.split("\n") if x.strip()]
+            update_recipe(recipe_id, dish_name.strip(), ingredients, instructions, client=client)
+            st.session_state.editing_recipe_id = None
+            goto("my_recipes")
+    with c2:
+        if st.button("취소", use_container_width=True):
+            st.session_state.editing_recipe_id = None
+            goto("my_recipes")
+
+
 SCREENS = {
     "start": screen_start,
     "recipe_confirm": screen_recipe_confirm,
@@ -629,6 +877,9 @@ SCREENS = {
     "register_ingredients": screen_register_ingredients,
     "register_steps": screen_register_steps,
     "complete": screen_complete,
+    "login": screen_login,
+    "my_recipes": screen_my_recipes,
+    "edit_recipe": screen_edit_recipe,
 }
 
 
@@ -636,7 +887,9 @@ def main() -> None:
     st.set_page_config(page_title="ChefEar", page_icon="🍲", layout="centered", initial_sidebar_state="collapsed")
     init_state()
     inject_css()
-    render_brand()
+    # 로그인 아이콘은 start 화면에서만 "ChefEar" 제목과 나란히 보여준다(2026-08-21 요청).
+    if render_brand(show_login=(st.session_state.screen == "start")):
+        goto("login")
     SCREENS[st.session_state.screen]()
 
 

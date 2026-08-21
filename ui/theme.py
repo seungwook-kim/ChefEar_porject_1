@@ -127,6 +127,22 @@ div.stTextInput input {
   border-radius: 14px; border: 1.5px solid var(--border); background: var(--surface-alt);
   color: var(--text); font-family: inherit;
 }
+div.stTextArea textarea {
+  border-radius: 14px; border: 1.5px solid var(--border); background: transparent;
+  color: var(--text); font-family: inherit;
+}
+/* 비밀번호 입력칸의 "표시/숨기기"(눈 모양) 토글 버튼 - Streamlit이 클래스명을
+   렌더링마다 새로 해시해서(st-emotion-cache-*) 클래스로는 못 짚고, 값이 고정인
+   aria-label(Show/Hide password)로 짚는다. 버튼 자체 배경은 원래도 투명이지만,
+   버튼을 감싸는 바로 위 div가 회색 배경(rgb(240,242,246))을 따로 갖고 있어서
+   버튼만 투명하게 해선 그 사각 회색 박스가 그대로 남는다 - 그 감싸는 div까지
+   :has()로 같이 짚어서 투명하게 만든다(실측 확인, 2026-08-21).*/
+button[aria-label="Show password"], button[aria-label="Hide password"] {
+  background: transparent; border: none; box-shadow: none;
+}
+div:has(> button[aria-label="Show password"]), div:has(> button[aria-label="Hide password"]) {
+  background: transparent; border: none;
+}
 
 .ce-back-link { display:inline-flex; align-items:center; gap:4px; font-size:13px; color: var(--text-secondary); font-weight:700; margin-bottom: 4px; }
 
@@ -156,6 +172,16 @@ div.stTextInput input {
   background: var(--surface); border-radius: 22px; padding: 22px 20px;
   box-shadow: 0 10px 24px rgba(36,28,21,0.07); gap: 14px;
 }
+
+/* 마이 레시피 목록의 레시피 한 건 카드 - cs_step_card와 같은 이유로(안에 실제
+   st.button이 들어가서 순수 HTML .ce-card로 못 감쌈) 진짜 컨테이너를 카드로 쓴다.
+   레시피마다 키가 다르니(st-key-my_recipe_card_<id>) 부분일치 선택자로 짚는다. */
+[data-testid="stVerticalBlock"][class*="st-key-my_recipe_card_"] {
+  background: var(--surface); border-radius: 18px; padding: 16px 18px;
+  box-shadow: 0 6px 16px rgba(36,28,21,0.06); gap: 6px;
+}
+.ce-recipe-name { display:flex; align-items:center; gap:8px; font-size:15px; font-weight:700; color: var(--text); }
+.ce-recipe-name .icon { color: var(--accent); display:inline-flex; }
 
 .ce-dots { display:flex; justify-content:center; gap:9px; }
 .ce-dots .d { width:9px; height:9px; border-radius:50%; background: var(--border); }
@@ -471,8 +497,20 @@ def render_loading_screen(message: str = "불러오는 중...") -> None:
     render_spacer()
 
 
-def render_brand() -> None:
-    st.markdown(f'<div class="ce-brand"><span class="icon">{ICON_POT}</span> ChefEar</div>', unsafe_allow_html=True)
+def render_brand(show_login: bool = False) -> bool:
+    """show_login=True면 "ChefEar" 제목과 같은 줄 오른쪽에 로그인 아이콘 버튼을 나란히
+    놓는다(2026-08-21, start 화면 요청 - 원래는 화면 쪽에서 별도 줄로 그렸었는데 제목과
+    안 나란해서 여기로 옮김). 로그인 내비게이션(goto)은 이 파일이 모르는 app.py 쪽
+    개념이라, 여기서는 버튼이 눌렸는지 bool만 돌려주고 실제 화면 전환은 호출부가 한다
+    (render_back_link()와 같은 패턴)."""
+    if not show_login:
+        st.markdown(f'<div class="ce-brand"><span class="icon">{ICON_POT}</span> ChefEar</div>', unsafe_allow_html=True)
+        return False
+    left, right = st.columns([6, 1])
+    with left:
+        st.markdown(f'<div class="ce-brand"><span class="icon">{ICON_POT}</span> ChefEar</div>', unsafe_allow_html=True)
+    with right:
+        return st.button(":material/login:", key="brand_login_btn", help="로그인")
 
 
 def render_back_link(label: str = "처음으로", key: str = "ce_back_link") -> bool:
