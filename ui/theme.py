@@ -5,7 +5,6 @@ Streamlit 기본 컴포넌트로 표현하기 어려운 조각만 st.markdown(un
 그린다. docs/ChefEar_PRD_SDD_v0.8.md 3.3의 화면 구성(①~⑥)을 그대로 따른다.
 """
 import base64
-import json
 from pathlib import Path
 from string import Template
 
@@ -221,7 +220,42 @@ div:has(> button[aria-label="Show password"]), div:has(> button[aria-label="Hide
 .ce-dots .d.active { background: var(--accent); transform: scale(1.25); }
 .ce-dots .d.done { background: var(--accent-soft-text); opacity:.45; }
 
+/* cooking_step 상단 점을 실제로 눌러서 그 단계로 바로 이동할 수 있게 만든 버전
+   (2026-08-21 요청) - _dots_html()의 장식용 span 대신 진짜 st.button()을 한 줄에
+   나란히 놓는다. st.columns로 나누면 my_recipe_actions_와 같은 이유로 화면이
+   넓을수록 점 사이 간격이 벌어지므로, 세로 블록 하나에 버튼들을 넣고 여기서
+   가로 배치로 강제한다. 버튼 상태(active/done/todo)를 키 이름 자체에 인코딩해서
+   (cs_dot_active_01 등) CSS가 셀렉터만으로 바로 스타일을 입힐 수 있게 한다. */
+[data-testid="stVerticalBlock"][class*="st-key-cs_dots_row"] {
+  flex-direction: row; flex-wrap: nowrap; justify-content: center; gap: 2px;
+}
+[class*="st-key-cs_dots_row"] [data-testid="stElementContainer"] { width: auto; }
+[class*="st-key-cs_dot_todo_"] button,
+[class*="st-key-cs_dot_done_"] button,
+[class*="st-key-cs_dot_active_"] button {
+  position: relative; width: 22px; height: 22px; min-width: 22px; min-height: 22px;
+  padding: 0; border: none; background: transparent; box-shadow: none; cursor: pointer;
+  color: transparent; font-size: 0; line-height: 0;
+}
+[class*="st-key-cs_dot_todo_"] button::after,
+[class*="st-key-cs_dot_done_"] button::after,
+[class*="st-key-cs_dot_active_"] button::after {
+  content: ""; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 9px; height: 9px; border-radius: 50%; background: var(--border);
+}
+[class*="st-key-cs_dot_done_"] button::after { background: var(--accent-soft-text); opacity: .45; }
+[class*="st-key-cs_dot_active_"] button::after {
+  background: var(--accent); transform: translate(-50%, -50%) scale(1.25);
+}
+
 .ce-step-title { font-size:22px; font-weight:800; text-align:center; line-height:1.45; margin: 32px 0 14px !important; }
+/* 조리순서 단계 텍스트 양옆의 이전/다음 화살표(2026-08-21 요청) - 화살표는 각자 칸
+   가장자리에 붙어있고 가운데 텍스트 칸만 늘어나면 되므로(2개 아이콘이 서로 벌어지는
+   my_recipe_actions_ 문제와 달리 여기선 오히려 벌어지는 게 의도된 배치), st.columns를
+   그대로 써도 된다. */
+[class*="st-key-cs_prev_arrow"] button, [class*="st-key-cs_next_arrow"] button {
+  background: var(--surface-alt); border: 1px solid var(--border); color: var(--accent);
+}
 
 .ce-chip-grid { display:flex; flex-wrap:wrap; column-gap:9px; row-gap:16px; }
 .ce-chip { display:inline-flex; align-items:center; gap:6px; background: var(--surface-alt); border:1px solid var(--border);
@@ -330,7 +364,15 @@ div.stButton > button[kind="primary"]:hover { background: var(--accent-dark); bo
 
 .ce-big-mic-wrap { display:flex; justify-content:center; margin: 34px 0 8px; cursor: pointer; }
 .ce-big-mic { width:84px; height:84px; border-radius:50%; display:grid; place-items:center;
-  background: var(--surface-alt); color: var(--accent); border: 2px solid var(--border); cursor: pointer; }
+  background: var(--surface-alt); color: var(--accent); border: 2px solid var(--border); cursor: pointer;
+  animation: ce-big-mic-pulse 1.8s ease-in-out infinite; }
+/* start 화면 큰 마이크 아이콘이 커졌다 작아지길 반복해서 "지금 듣고 있다"는 느낌을 주는
+   숨쉬기(breathing) 애니메이션 - ce-mic-icon.listening::after의 퍼지는 링과는 다르게,
+   여긴 아이콘 자체가 확대/축소된다(2026-08-21 요청). */
+@keyframes ce-big-mic-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.12); }
+}
 
 /* start 화면의 실제 녹음 위젯(st.audio_input) - 장식용 원형 마이크 바로 아래 놓고, 앱
    색감에 맞춰 폭을 카드 안쪽으로 좁히고 둥글게 다듬는다. */
@@ -506,7 +548,6 @@ _MIC_BODY = (
 ICON_MIC_MD = _SVG.format(size=22, body=_MIC_BODY)
 ICON_MIC_LG = _SVG.format(size=34, body=_MIC_BODY)
 ICON_PLAY = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 3 20 12 6 21 6 3"/></svg>'
-ICON_PAUSE = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="3" width="5" height="18" rx="1.5"/><rect x="14" y="3" width="5" height="18" rx="1.5"/></svg>'
 ICON_CHEVRON_LEFT = _SVG.format(size=12, body='<polyline points="15 18 9 12 15 6"/>')
 
 
@@ -619,6 +660,24 @@ def render_dots(total: int, current: int) -> None:
     st.markdown(_dots_html(total, current), unsafe_allow_html=True)
 
 
+def render_interactive_dots(total: int, current: int) -> int | None:
+    """render_step_card()의 점(dots) - _dots_html()과 똑같이 생겼지만 실제 st.button()이라
+    눌러서 그 단계로 바로 이동할 수 있다(2026-08-21, 조리순서 화면 요청). 클릭된 단계
+    번호(1..total)를 반환하고, 아무 것도 안 눌렸으면 None을 반환한다.
+
+    register_intro 등 다른 화면의 render_dots()(진행 단계 안내용, 클릭 불가)는 그대로
+    둔다 - 이건 cooking_step처럼 "실제로 그 단계로 건너뛸 수 있어야" 의미 있는 화면
+    전용이다.
+    """
+    target: int | None = None
+    with st.container(key="cs_dots_row"):
+        for i in range(1, total + 1):
+            state = "active" if i == current else ("done" if i < current else "todo")
+            if st.button(" ", key=f"cs_dot_{state}_{i:02d}", help=f"{i}단계로 이동"):
+                target = i
+    return target
+
+
 _WAVE_HEIGHTS = [6, 10, 16, 24, 14, 22, 28, 18, 26, 12, 20, 9, 16, 24, 14, 8, 12, 6, 10, 6]
 
 
@@ -637,27 +696,20 @@ _AUDIO_PLAYER_TEMPLATE = Template("""
   * { margin:0; padding:0; box-sizing:border-box;
       font-family: "Pretendard", -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
   .player { display:flex; align-items:center; gap:14px; background:#fbf6ec;
-    border-radius:999px; padding:10px 14px; }
-  .play-btn { width:38px; height:38px; min-width:38px; border-radius:50%; border:none; cursor:pointer;
-    background:#fbebd3; color:#ee7b36; display:grid; place-items:center; }
-  .play-btn:hover { background:#f6dfb8; }
+    border-radius:999px; padding:10px 16px; }
   .wave { flex:1; display:flex; align-items:center; gap:3px; height:26px; overflow:hidden; }
   .wave span { flex:1 1 0; min-width:0; border-radius:2px; background:#ee7b36; opacity:.4;
     align-self:center; transition: opacity .1s linear; }
   .wave span.played { opacity:1; }
 </style>
 <div class="player">
-  <button class="play-btn" id="playbtn" type="button" aria-label="재생">$play_icon</button>
   <span class="wave" id="wave">$bars</span>
 </div>
 <audio id="audio" src="$audio_src" preload="auto" autoplay></audio>
 <script>
-  const btn = document.getElementById('playbtn');
   const audio = document.getElementById('audio');
   const wave = document.getElementById('wave');
   const bars = wave.querySelectorAll('span');
-  const iconPlay = $play_icon_js;
-  const iconPause = $pause_icon_js;
 
   // 실제 재생 위치에 맞춰 막대를 하나씩 "지나갔다"는 색으로 칠한다(진짜 파형 진행 표시).
   // 막대 높이 자체는 이미 실제 오디오 진폭으로 그려져 있다(render_audio_player 참고),
@@ -669,18 +721,13 @@ _AUDIO_PLAYER_TEMPLATE = Template("""
     bars.forEach(function (bar, i) { bar.classList.toggle('played', i < played); });
   }
   audio.addEventListener('timeupdate', updateProgress);
-
-  btn.addEventListener('click', function () {
-    if (audio.paused) { audio.play(); } else { audio.pause(); }
-  });
-  audio.addEventListener('play', function () { btn.innerHTML = iconPause; });
-  audio.addEventListener('pause', function () { btn.innerHTML = iconPlay; });
   audio.addEventListener('ended', function () {
-    btn.innerHTML = iconPlay;
     bars.forEach(function (bar) { bar.classList.remove('played'); });
   });
-  // 자동재생이 브라우저 정책으로 막히면(autoplay 속성만으론 항상 보장되지 않음) 그냥
-  // 대기 상태로 남고, 사용자가 재생 버튼을 눌러 시작할 수 있다.
+  // 2026-08-21: 재생 버튼을 없앴다(요청) - 자동재생만 믿는다. 브라우저 자동재생 정책으로
+  // 막히면(드묾 - 사용자가 이미 페이지와 상호작용한 뒤라 대부분 허용됨) 이 위젯 안에서는
+  // 더 이상 수동으로 재생을 시작할 방법이 없다 - "다시" 음성 명령/버튼으로 다시 이
+  // 화면에 들어오면 재생을 다시 시도한다.
   audio.play().catch(function () {});
 </script>
 """)
@@ -716,19 +763,23 @@ def render_audio_player(audio_path: str | Path, height: int = 64, nonce: int | s
     안 어울린다 — 브라우저 네이티브 미디어 컨트롤은 CSS로 커스터마이징이 사실상 불가능하다
     (표준화된 크로스 브라우저 방법이 없음, Chromium의 ::-webkit-media-controls는 비표준·
     브라우저 업데이트마다 깨질 수 있음). 그래서 st.iframe()으로 이 카드와 똑같은
-    모양(둥근 배경 + 원형 재생 버튼 + 막대 파형)의 HTML/JS를 직접 그리고, 클릭하면 JS로
-    <audio>를 재생/정지하는 방식으로 만들었다. render_step_card()의 장식용 재생바는
-    건드리지 않고, 그 아래에 이 진짜 위젯을 별도로 놓는다.
+    모양(둥근 배경 + 막대 파형)의 HTML/JS를 직접 그려서 자동재생한다. render_step_card()의
+    장식용 재생바는 건드리지 않고, 그 아래에 이 진짜 위젯을 별도로 놓는다.
 
-    iframe이라 부모 문서의 CSS 변수(:root)를 못 물려받아서, .ce-player/.ce-play-btn/
-    .ce-wave와 같은 색상값을 여기서 다시 하드코딩했다(위 CSS :root의 --surface-alt/
-    --accent/--accent-soft 값과 동일 — 그쪽이 바뀌면 여기도 같이 바꿔야 함).
+    2026-08-21: 원래는 파형 옆에 원형 재생/정지 버튼도 있었는데(눌러서 수동 재생/정지),
+    자동재생만으로 충분하다는 요청으로 버튼은 없애고 파형만 남겼다 - 이제 이 위젯은
+    순전히 "재생 중" 진행 표시용이고 클릭해도 아무 반응이 없다.
+
+    iframe이라 부모 문서의 CSS 변수(:root)를 못 물려받아서, .ce-player/.ce-wave와
+    같은 색상값을 여기서 다시 하드코딩했다(위 CSS :root의 --surface-alt/--accent/
+    --accent-soft 값과 동일 — 그쪽이 바뀌면 여기도 같이 바꿔야 함).
 
     막대 높이는 _compute_wave_bars()로 이 파일의 실제 진폭을 읽어서 그린다(고정된 가짜
     파형이 아님). <audio autoplay>를 넣어서 "다음"/"이전"으로 이 위젯이 새로 렌더링될
     때마다(=화면이 다시 그려질 때마다) 자동 재생을 시도한다 — 브라우저 자동재생 정책상
     100% 보장되진 않지만(사용자가 이미 페이지와 상호작용한 뒤라 대부분 허용됨), 막히면
-    조용히 대기 상태로 남고 재생 버튼으로 수동 시작 가능하다.
+    조용히 대기 상태로 남는다 - 2026-08-21 요청으로 재생 버튼을 없애서, 막혔을 때 이
+    위젯 안에서 수동으로 다시 시작할 방법은 이제 없다(파형만 표시, 클릭 불가).
 
     nonce: "다시"(재청취)처럼 같은 파일을 같은 단계에서 다시 재생해야 할 때 쓴다 — audio_src가
     이전 렌더와 완전히 같은 문자열이면 Streamlit 프론트엔드(React)가 iframe의 srcDoc이
@@ -742,11 +793,8 @@ def render_audio_player(audio_path: str | Path, height: int = 64, nonce: int | s
     bar_heights = _compute_wave_bars(audio_path)
     bars_html = "".join(f'<span style="height:{h}px"></span>' for h in bar_heights)
     html = f"<!-- replay-nonce:{nonce} -->\n" + _AUDIO_PLAYER_TEMPLATE.substitute(
-        play_icon=ICON_PLAY,
         bars=bars_html,
         audio_src=audio_src,
-        play_icon_js=json.dumps(ICON_PLAY),
-        pause_icon_js=json.dumps(ICON_PAUSE),
     )
     st.iframe(html, height=height)
 
@@ -775,7 +823,7 @@ def render_step_card(
     show_player: bool = True,
     audio_path: str | Path | None = None,
     audio_nonce: int | str = 0,
-) -> None:
+) -> int | None:
     """조리 화면의 카드(점 표시 + 단계 텍스트 + 재생바)를 흰 박스 안에 그린다.
 
     순수 HTML(`<div class="ce-card">`)로 카드를 열고 여러 st.markdown 호출을 거쳐
@@ -792,16 +840,43 @@ def render_step_card(
     audio_path가 주어지면 그 wav로 render_audio_player()를 카드 안에 넣는다(진짜
     재생 가능). None이고 show_player=True면 장식용 정지 파형만 보여준다(다른
     레시피처럼 오디오가 없는 경우).
+
+    2026-08-21: 점을 눌러 그 단계로 바로 이동하고, 단계 텍스트 양옆 화살표로
+    이전/다음 단계로 넘어갈 수 있게 해달라는 요청 - 이 함수는 순수 표시만 담당하고
+    (theme.py는 orchestration을 모른다) 실제 단계 전환(세션 갱신·음성 재생)은
+    호출부(screen_cooking_step())가 반환값을 보고 처리한다. 점 클릭과 화살표 클릭
+    둘 다 같은 반환값(이동할 단계 번호)으로 합쳐서 돌려준다 - 호출부가 "누가
+    눌렀는지"까지 구분할 필요는 없어서다.
     """
+    nav_target: int | None = None
     with st.container(key="cs_step_card"):
-        st.markdown(
-            _dots_html(total, current_step) + f'<p class="ce-step-title">{step_text}</p>',
-            unsafe_allow_html=True,
-        )
+        nav_target = render_interactive_dots(total, current_step)
+
+        # 2026-08-21: 단계 텍스트가 여러 줄로 줄바꿈되면(예: 3줄) 화살표가 기본
+        # top-정렬이라 텍스트 첫 줄에만 나란해 보이고 전체 블록 중앙과는 안 맞았다
+        # (스크린샷 지적) - vertical_alignment="center"로 텍스트 블록 높이와 무관하게
+        # 화살표가 항상 텍스트 세로 중앙에 오게 한다.
+        arrow_l, mid, arrow_r = st.columns([1, 7, 1], vertical_alignment="center")
+        with arrow_l:
+            if st.button(
+                ":material/chevron_left:", key="cs_prev_arrow", help="이전 단계",
+                disabled=current_step <= 1, use_container_width=True,
+            ):
+                nav_target = current_step - 1
+        with mid:
+            st.markdown(f'<p class="ce-step-title">{step_text}</p>', unsafe_allow_html=True)
+        with arrow_r:
+            if st.button(
+                ":material/chevron_right:", key="cs_next_arrow", help="다음 단계",
+                disabled=current_step >= total, use_container_width=True,
+            ):
+                nav_target = current_step + 1
+
         if audio_path is not None:
             render_audio_player(audio_path, nonce=audio_nonce)
         elif show_player:
             st.markdown(_player_html(), unsafe_allow_html=True)
+    return nav_target
 
 
 def render_mic_bar(state: str, hint: str, listening: bool = True) -> None:

@@ -170,7 +170,13 @@ def _render_cached_speech(message: str) -> None:
         render_audio_autoplay(path)
 
 
-def speak(message: str, *, recipe_id: str | None = None, step_number: int | None = None) -> None:
+def speak(
+    message: str,
+    *,
+    recipe_id: str | None = None,
+    step_number: int | None = None,
+    hidden: bool = False,
+) -> None:
     """TTS로 응답을 재생하고 채팅 로그에 남긴다. 합성 실패는 조용히 삼키지 않는다(EC-05) —
     화면 텍스트는 항상 남고, 음성만 실패했다는 걸 사용자에게 알린다.
 
@@ -185,6 +191,14 @@ def speak(message: str, *, recipe_id: str | None = None, step_number: int | None
     1회성 문구)는 문구 자체의 해시를 캐시 키로 써서, 자주 반복되는 고정 문구
     ("1단계예요, 이전 단계가 없어요." 등)도 같이 재사용된다. 둘 다 로컬 CPU 기준
     문장당 최대 몇 분 걸리는 재합성을 피하기 위함이다(2026-08-20 실측).
+
+    hidden=True: register_steps의 "네, 저장할게요"처럼 speak() 직후 바로 goto()로
+    다른 화면으로 넘어가는 호출부에서 쓴다. render_audio_player()(재생바)로 그려도
+    goto()의 st.rerun()이 곧장 화면을 바꿔버려서 재생바가 "떴다가 사라지는" 것처럼
+    보일 뿐 실제로 남지도 않는데, 그 순간 그려지는 재생바 자체가 화면 깜빡임으로
+    보인다는 지적(2026-08-21)으로 추가됨 — 합성/캐싱은 그대로 하되 화면에는
+    render_audio_autoplay()(화면 없는 자동재생)만 그린다. 도착 화면이 같은 문구를
+    _render_cached_speech()로 다시 찾아 들려주는 경우, 실제로 들리는 소리는 그쪽이다.
     """
     st.session_state.chat_log.append(("ai", message))
     try:
@@ -201,7 +215,10 @@ def speak(message: str, *, recipe_id: str | None = None, step_number: int | None
             audio_path.parent.mkdir(parents=True, exist_ok=True)
             sf.write(audio_path, waveform, sample_rate)
 
-        render_audio_player(audio_path)
+        if hidden:
+            render_audio_autoplay(audio_path)
+        else:
+            render_audio_player(audio_path)
     except Exception as exc:  # noqa: BLE001 — 사용자에게 보여줄 실패이지 숨길 실패가 아님
         st.warning(f"음성 재생에 실패했어요(텍스트는 위에 표시돼요): {exc}")
 
@@ -439,9 +456,21 @@ def screen_start() -> None:
     )
     render_big_mic()
 
-    text = listen("start")
+    # register_intro/register_dish_name과 같은 이유로(2026-08-21) listen()이 따로 그리는
+    # "말씀해주세요" 녹음 위젯은 꺼둔다 - 이 화면엔 이미 render_big_mic()이 그리는 원형
+    # 마이크 아이콘 + "마이크 켜기" 버튼으로 여는 자체 녹음 위젯이 있어서, 같은 화면에
+    # 마이크 녹음 위젯이 두 벌 겹쳐 보이는 문제가 있었다. 텍스트 입력 대체 경로는 그대로
+    # 남아있고, 실제 음성 녹음은 render_big_mic() 쪽 위젯으로 여전히 가능하다.
+    text = listen("start", show_mic=False)
     if text:
         process_utterance(text)
+
+    # 2026-08-21: 위쪽에만 render_spacer()가 있고 아래쪽엔 없어서, block-container의
+    # flex:1 남는 공간이 전부 위에만 쌓여 콘텐츠가 화면 아래쪽으로 밀렸다 - 뷰포트가
+    # 높을수록(세로로 긴 화면비) 남는 공간 자체가 커져서 그만큼 더 크게 벌어져 보였다.
+    # 다른 화면들(register_intro, complete, login 등)처럼 아래에도 render_spacer()를
+    # 넣어 남는 공간을 위아래로 똑같이 나눠 화면 비율과 무관하게 수직 중앙 정렬되게 한다.
+    render_spacer()
 
 
 def screen_recipe_confirm() -> None:
@@ -497,7 +526,7 @@ def screen_cooking_step() -> None:
     # (speak()가 쓰는 것과 같은 ui/assets/audio/<recipe_id>/<step:02d>.wav 캐시 경로).
     cached_audio_path = _AUDIO_DIR / str(view["recipe_id"]) / f"{step_number:02d}.wav"
     if cached_audio_path.exists():
-        render_step_card(
+        nav_target = render_step_card(
             total,
             step_number,
             current["text"],
@@ -505,7 +534,21 @@ def screen_cooking_step() -> None:
             audio_nonce=st.session_state.get("_audio_replay_nonce", 0),
         )
     else:
-        render_step_card(total, step_number, current["text"])
+        nav_target = render_step_card(total, step_number, current["text"])
+
+    # 2026-08-21: 점을 눌러 그 단계로 바로 이동하거나 화살표로 이전/다음 단계로 넘어간
+    # 경우 - render_step_card()는 표시만 하고 실제 상태 전환은 여기서 한다(theme.py는
+    # orchestration을 몰라서). [이전][다음] 버튼(fallback_buttons)이 manual_fallback()으로
+    # 하는 것과 같은 효과(세션 갱신 + 음성 재생 + 재생 nonce 증가)를 낸다 - 단, 점 클릭은
+    # 임의의 단계로 바로 건너뛸 수 있어야 해서 manual_fallback()(상대 이동만 지원)
+    # 대신 view["steps"]에서 바로 읽는다(get_precomputed_steps()로 이미 전체를
+    # 가져와서 recipe_view에 캐싱돼 있어 추가 조회가 필요 없다).
+    if nav_target is not None:
+        session["step_number"] = nav_target
+        st.session_state["_audio_replay_nonce"] = st.session_state.get("_audio_replay_nonce", 0) + 1
+        target_step = view["steps"][nav_target - 1]
+        speak(target_step["text"], recipe_id=view["recipe_id"], step_number=target_step.get("step_number", nav_target))
+        goto("cooking_step")
 
     st.markdown("**오늘의 재료**")
     render_chips(_ingredients_to_chips(view["ingredients_raw"]))
@@ -695,7 +738,7 @@ def screen_register_steps() -> None:
 
     if reg["instructions"] and st.button("네, 저장할게요", type="primary", use_container_width=True):
         register_recipe(st.session_state.pipeline_session, "confirm", None, client=get_client())
-        speak(_REGISTER_SAVED_MESSAGE)
+        speak(_REGISTER_SAVED_MESSAGE, hidden=True)
         goto("complete")
 
 
