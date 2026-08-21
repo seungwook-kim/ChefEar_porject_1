@@ -621,7 +621,7 @@ def _compute_wave_bars(audio_path: str | Path, num_bars: int = 20, min_h: int = 
     return [round(min_h + (v / peak) * (max_h - min_h)) for v in rms_values]
 
 
-def render_audio_player(audio_path: str | Path, height: int = 64) -> None:
+def render_audio_player(audio_path: str | Path, height: int = 64, nonce: int | str = 0) -> None:
     """theme.py의 장식용 재생바(.ce-player)와 똑같이 생긴, 실제로 재생되는 위젯.
 
     st.audio()는 브라우저 기본 재생 컨트롤(탐색바 포함)을 그대로 노출해서 앱 디자인과
@@ -641,12 +641,19 @@ def render_audio_player(audio_path: str | Path, height: int = 64) -> None:
     때마다(=화면이 다시 그려질 때마다) 자동 재생을 시도한다 — 브라우저 자동재생 정책상
     100% 보장되진 않지만(사용자가 이미 페이지와 상호작용한 뒤라 대부분 허용됨), 막히면
     조용히 대기 상태로 남고 재생 버튼으로 수동 시작 가능하다.
+
+    nonce: "다시"(재청취)처럼 같은 파일을 같은 단계에서 다시 재생해야 할 때 쓴다 — audio_src가
+    이전 렌더와 완전히 같은 문자열이면 Streamlit 프론트엔드(React)가 iframe의 srcDoc이
+    안 바뀐 걸로 보고 DOM을 그대로 유지해버려서(리마운트 안 함) <audio autoplay>가 다시
+    실행되지 않는다(2026-08-21, "다시" 재생 요청으로 확인됨). html 맨 앞에 안 보이는
+    주석으로 넣어 매 호출마다 문자열 자체를 다르게 만들면 프론트엔드가 새 iframe으로
+    인식해서 다시 로드 -> autoplay가 재실행된다.
     """
     data = Path(audio_path).read_bytes()
     audio_src = "data:audio/wav;base64," + base64.b64encode(data).decode("ascii")
     bar_heights = _compute_wave_bars(audio_path)
     bars_html = "".join(f'<span style="height:{h}px"></span>' for h in bar_heights)
-    html = _AUDIO_PLAYER_TEMPLATE.substitute(
+    html = f"<!-- replay-nonce:{nonce} -->\n" + _AUDIO_PLAYER_TEMPLATE.substitute(
         play_icon=ICON_PLAY,
         bars=bars_html,
         audio_src=audio_src,
@@ -662,6 +669,7 @@ def render_step_card(
     step_text: str,
     show_player: bool = True,
     audio_path: str | Path | None = None,
+    audio_nonce: int | str = 0,
 ) -> None:
     """조리 화면의 카드(점 표시 + 단계 텍스트 + 재생바)를 흰 박스 안에 그린다.
 
@@ -686,7 +694,7 @@ def render_step_card(
             unsafe_allow_html=True,
         )
         if audio_path is not None:
-            render_audio_player(audio_path)
+            render_audio_player(audio_path, nonce=audio_nonce)
         elif show_player:
             st.markdown(_player_html(), unsafe_allow_html=True)
 

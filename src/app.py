@@ -39,6 +39,7 @@ from theme import (
     ICON_SPARKLE,
     ICON_X_CIRCLE,
     inject_css,
+    render_audio_player,
     render_badge,
     render_big_mic,
     render_brand,
@@ -51,6 +52,15 @@ from theme import (
 )
 
 load_env()
+
+# 2026-08-21: st.audio()는 Streamlit이 rerun마다 <audio> 태그를 새로 만드는 방식이라
+# 자동재생은 물론 수동 재생 버튼도 안 먹히는 문제가 실측으로 확인됐다(브라우저에서 재생
+# 버튼을 눌러도 반응 없음). 대신 ui/streamlit_screens/cooking_step.py에서 이미 실제로
+# 잘 작동하는 render_audio_player()(진짜 <audio autoplay> + JS 우회)를 그대로 쓴다 —
+# 그 화면이 쓰는 것과 같은 ui/assets/audio/ 경로를 그대로 재사용해서, 같은 레시피의
+# 조리 단계 음성 캐시를 두 앱이 같이 쓸 수 있게 한다(2026-08-20 실측: 문장당 최대
+# 4분 걸리는 로컬 CPU 합성을 두 번 반복하지 않아도 됨).
+_AUDIO_DIR = PROJECT_ROOT / "ui" / "assets" / "audio"
 
 # ============================================================
 # 세션 상태
@@ -112,15 +122,41 @@ def get_owner_id() -> str | None:
 # ============================================================
 
 
-def speak(message: str) -> None:
+def speak(message: str, *, recipe_id: str | None = None, step_number: int | None = None) -> None:
     """TTS로 응답을 재생하고 채팅 로그에 남긴다. 합성 실패는 조용히 삼키지 않는다(EC-05) —
-    화면 텍스트는 항상 남고, 음성만 실패했다는 걸 사용자에게 알린다."""
+    화면 텍스트는 항상 남고, 음성만 실패했다는 걸 사용자에게 알린다.
+
+    2026-08-21: st.audio()는 Streamlit이 rerun마다 <audio> 태그를 새로 만드는 방식이라
+    자동재생·수동 재생 버튼 둘 다 안 먹히는 문제가 실측으로 확인됐다(브라우저에서 재생
+    버튼을 눌러도 무반응). 대신 ui/streamlit_screens/cooking_step.py에서 이미 실제로
+    잘 작동하는 render_audio_player()(진짜 <audio autoplay> + JS 우회)를 그대로 쓴다.
+
+    recipe_id·step_number가 둘 다 주어지면(=이 메시지가 특정 레시피의 특정 조리 단계
+    안내문일 때) ui/assets/audio/<recipe_id>/<step:02d>.wav로 캐싱한다 — cooking_step.py와
+    같은 경로 규칙이라 두 화면이 같은 캐시를 공유한다. 그 외(확인 메시지·에러 안내 등
+    1회성 문구)는 문구 자체의 해시를 캐시 키로 써서, 자주 반복되는 고정 문구
+    ("1단계예요, 이전 단계가 없어요." 등)도 같이 재사용된다. 둘 다 로컬 CPU 기준
+    문장당 최대 몇 분 걸리는 재합성을 피하기 위함이다(2026-08-20 실측).
+    """
     st.session_state.chat_log.append(("ai", message))
     try:
-        from tts.infer import tts_synthesize
+        if recipe_id and step_number:
+            audio_path = _AUDIO_DIR / str(recipe_id) / f"{step_number:02d}.wav"
+        else:
+            import hashlib
 
-        waveform, sample_rate = tts_synthesize(message)
-        st.audio(waveform, sample_rate=sample_rate)
+            digest = hashlib.sha1(message.encode("utf-8")).hexdigest()[:16]
+            audio_path = _AUDIO_DIR / "_common" / f"{digest}.wav"
+
+        if not audio_path.exists():
+            from tts.infer import tts_synthesize
+
+            with st.spinner("음성 합성 중이에요... 로컬 CPU라 오래 걸릴 수 있어요(최대 몇 분). 잠시만 기다려주세요."):
+                waveform, sample_rate = tts_synthesize(message)
+            audio_path.parent.mkdir(parents=True, exist_ok=True)
+            sf.write(audio_path, waveform, sample_rate)
+
+        render_audio_player(audio_path)
     except Exception as exc:  # noqa: BLE001 — 사용자에게 보여줄 실패이지 숨길 실패가 아님
         st.warning(f"음성 재생에 실패했어요(텍스트는 위에 표시돼요): {exc}")
 
@@ -140,6 +176,10 @@ def listen(key_prefix: str) -> str | None:
         placeholder="마이크 대신 직접 타이핑해도 돼요",
     )
 
+    import time as _t
+    with open(r"C:\Users\hlkm1\AppData\Local\Temp\claude\c--Users-hlkm1-Desktop-minha-portpolio-chefEar\74e331ba-ea6f-44df-b612-02d394d3af74\scratchpad\_debug_process_utterance.log", "a", encoding="utf-8") as _f:
+        _f.write(f"{_t.time()} LISTEN turn={turn} audio_file_is_none={audio_file is None}\n")
+
     if audio_file is not None:
         data, sample_rate = sf.read(io.BytesIO(audio_file.getvalue()))
         if data.ndim > 1:  # 스테레오면 모노로
@@ -147,6 +187,8 @@ def listen(key_prefix: str) -> str | None:
         from stt.infer import stt_transcribe
 
         text = stt_transcribe(data.astype(np.float32), sample_rate=sample_rate)
+        with open(r"C:\Users\hlkm1\AppData\Local\Temp\claude\c--Users-hlkm1-Desktop-minha-portpolio-chefEar\74e331ba-ea6f-44df-b612-02d394d3af74\scratchpad\_debug_process_utterance.log", "a", encoding="utf-8") as _f:
+            _f.write(f"{_t.time()} STT_RESULT turn={turn} audio_bytes={len(audio_file.getvalue())} duration_sec={len(data)/sample_rate:.3f} text={text!r}\n")
         if not text:
             st.info("잘 못 들었어요. 다시 말씀해주시거나 아래에 텍스트로 입력해주세요.")
             return None
@@ -198,7 +240,7 @@ def _ingredients_to_chips(raw: str) -> list[dict]:
         return []
     text = re.sub(r"\[[^\]]*\]", "", raw)
     items = [seg.strip() for seg in text.split("|") if seg.strip()]
-    return [{"name": item, "qty": "", "emoji": "🥕"} for item in items]
+    return [{"name": item, "qty": "", "emoji": "⭐"} for item in items]
 
 
 # ============================================================
@@ -207,6 +249,9 @@ def _ingredients_to_chips(raw: str) -> list[dict]:
 
 
 def process_utterance(text: str) -> None:
+    import time as _t
+    with open(r"C:\Users\hlkm1\AppData\Local\Temp\claude\c--Users-hlkm1-Desktop-minha-portpolio-chefEar\74e331ba-ea6f-44df-b612-02d394d3af74\scratchpad\_debug_process_utterance.log", "a", encoding="utf-8") as _f:
+        _f.write(f"{_t.time()} CALLED text={text!r}\n")
     st.session_state.chat_log.append(("user", text))
 
     session = st.session_state.pipeline_session
@@ -252,12 +297,18 @@ def process_utterance(text: str) -> None:
 
     if intent in ("진행", "재청취", "이전"):
         step = result.get("step")
+        # "다시"는 같은 파일을 다시 재생하는 거라 오디오 콘텐츠 자체가 안 바뀌어서
+        # nonce 없이는 iframe이 안 바뀐 걸로 보고 autoplay가 재실행되지 않는다. "다음"/
+        # "이전"도 이전에 방문했던 단계로 돌아갈 때(예: 2단계->1단계->2단계) 같은 문제가
+        # 재현될 수 있어 세 경우 모두 매번 nonce를 올려 항상 새로 로드되게 한다(theme.py
+        # render_audio_player() 참고).
+        st.session_state["_audio_replay_nonce"] = st.session_state.get("_audio_replay_nonce", 0) + 1
         if result.get("no_previous"):
             speak("1단계예요, 이전 단계가 없어요.")
         elif step is None:
             speak("마지막 단계까지 다 왔어요. 수고하셨어요!")
         else:
-            speak(step["text"])
+            speak(step["text"], recipe_id=session.get("current_recipe_id"), step_number=step.get("step_number"))
         goto("cooking_step")
         return
 
@@ -303,13 +354,18 @@ def fallback_buttons(key_prefix: str) -> None:
     for col, button in ((c1, "이전"), (c2, "다시"), (c3, "다음")):
         with col:
             if st.button(button, key=f"{key_prefix}_{button}", use_container_width=True):
+                st.session_state["_audio_replay_nonce"] = st.session_state.get("_audio_replay_nonce", 0) + 1
                 result = manual_fallback(session, button, client=client)
                 if result.get("no_previous"):
                     speak("1단계예요, 이전 단계가 없어요.")
                 elif result.get("step") is None:
                     speak("마지막 단계까지 다 왔어요. 수고하셨어요!")
                 else:
-                    speak(result["step"]["text"])
+                    speak(
+                        result["step"]["text"],
+                        recipe_id=session.get("current_recipe_id"),
+                        step_number=result["step"].get("step_number"),
+                    )
                 goto("cooking_step")
 
 
@@ -350,9 +406,13 @@ def screen_recipe_confirm() -> None:
     text = listen("recipe_confirm")
     if text:
         norm = text.strip().rstrip("?!. ")
-        if norm in ("응", "네", "좋아", "좋아요", "그래", "그래요", "응, 시작할게요"):
+        if norm in ("응", "네", "좋아", "좋아요", "그래", "그래요", "시작", "응, 시작할게요"):
             st.session_state.pipeline_session["step_number"] = 1
-            speak(view["steps"][0]["text"] if view["steps"] else "1단계 정보를 찾지 못했어요.")
+            if view["steps"]:
+                first_step = view["steps"][0]
+                speak(first_step["text"], recipe_id=view["recipe_id"], step_number=first_step.get("step_number", 1))
+            else:
+                speak("1단계 정보를 찾지 못했어요.")
             goto("cooking_step")
         else:
             process_utterance(text)
@@ -374,7 +434,23 @@ def screen_cooking_step() -> None:
     current = view["steps"][step_number - 1]
 
     render_badge(f'{view["dish_name"]} · {step_number} / {total} 단계')
-    render_step_card(total, step_number, current["text"], minutes=None)
+
+    # 2026-08-21: speak()가 만드는 재생 위젯은 그 직후 goto()의 st.rerun()으로 화면이
+    # 바로 새로고침되면서 같이 사라진다 — speak() 안에서 렌더링한 건 "그 rerun 전까지만"
+    # 유효하다. 그래서 이 화면(cooking_step) 자체가 매번 다시 그려질 때도 캐시된 오디오를
+    # 직접 찾아서 render_step_card()에 넘겨야 실제로 화면에 남아있는 재생바가 된다
+    # (speak()가 쓰는 것과 같은 ui/assets/audio/<recipe_id>/<step:02d>.wav 캐시 경로).
+    cached_audio_path = _AUDIO_DIR / str(view["recipe_id"]) / f"{step_number:02d}.wav"
+    if cached_audio_path.exists():
+        render_step_card(
+            total,
+            step_number,
+            current["text"],
+            audio_path=cached_audio_path,
+            audio_nonce=st.session_state.get("_audio_replay_nonce", 0),
+        )
+    else:
+        render_step_card(total, step_number, current["text"])
 
     st.markdown("**오늘의 재료**")
     render_chips(_ingredients_to_chips(view["ingredients_raw"]))
@@ -566,4 +642,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
->>>>>>> ff514ba7f7801e984a5a46fde10b1c54684842e0
+
