@@ -22,6 +22,9 @@
 | `test_identity.py` | 완성 | 쿠키 UUID(작업3) |
 | `test_mock_client.py` | 완성 | `db.get_client()` mock 자동 폴백 확인 |
 | `test_tts_pronunciation.py` | **신규(2026-08-19)** | `src/tts/pronunciation.py`의 발음 보정(겹받침 연음 오발음 패치, 예: "닭을"→"달글") 회귀테스트. `torch`/`qwen_tts` 불필요 — 순수 문자열 치환이라 pytest 전체 스위트에 GPU 의존성 안 늘림(일부러 `infer.py`와 분리) |
+| `test_llm_infer.py` | **신규(2026-08-20)** | `src/llm/infer.py`의 `generate_json()` mock 기반 유닛테스트 4개(성공/마크다운 코드펜스 제거/형식오류/`max_new_tokens` 전달) — GPU·실제 모델 로딩 불필요 |
+| `test_entity_extract_llm.py` | **신규(2026-08-20)** | `src/orchestration/entity_extract_llm.py`의 `extract_dish_name_llm()` mock 기반 유닛테스트 6개(성공/None/서버실패/타입오류/빈문자열/공백입력) |
+| `test_ui.py` | **신규(2026-08-20), pytest 대상 아님(git 미커밋)** | STT→LLM(요리명 추출)→Supabase 조회→TTS 5단계를 화면에 그대로 보여주는 수동 확인용 Streamlit 앱(`streamlit run tests/test_ui.py` 또는 `../run_local.sh`). `if __name__ == "__main__":` 가드 안에 있어서 pytest가 모듈로 import해도 아무것도 실행 안 됨(수집되는 `test_` 함수 없음). 2026-08-21 GPU 데스크탑(전용 venv `~/.venvs/chefear`)에서 STT/LLM/TTS/DB 개별 모델 로드는 확인됨 — 실제 발화 업로드→매칭→TTS 출력까지 이어지는 전체 흐름은 아직 미검증(`docs/specs/llm_dish_name_extract.md` AC-05 참고) |
 | `test-audio/` | **신규(2026-08-19), git 미커밋 상태** | pytest 대상 아님 — TTS 발음/속도 실험하며 만든 청취 확인용 wav 모음(GPU 벤치마크 문장, "닭을" 겹받침 연음 비교 등). `roundtrip_audio/`와 마찬가지로 용량 문제로 커밋 안 하는 쪽이 기존 관례와 맞음, 커밋 여부 팀 확인 필요 |
 | `integration_test.md` | **작성 완료(137줄), AC-14/15 전체 PASS(2026-08-16)** | AC-14~16(GWT) 기준 **수동** 시나리오 체크리스트(시나리오 A~D + AC-15 반복테스트 + AC-16 자리) — `handle_utterance()`를 파이썬에서 직접 호출하는 방식, `app.py`가 없어도 지금 바로 실행 가능. AC-16(TTS)만 아직 블로킹 표시 |
 | `integration_scenario_test.py` | 작성됨, **31/31 PASS(2026-08-16)** | 위 `integration_test.md`의 시나리오 A~D + AC-15를 코드로 그대로 옮겨 순차 실행하는 진단 스크립트. 실제 DB 연결(`allow_mock=False`) 필요, GPU 불필요. 실행 결과(PASS/FAIL)를 보고 `integration_test.md` 체크박스를 채우는 용도 — pytest 아님, assert로 죽지 않고 끝까지 돌고 마지막에 요약 출력. ⚠️ 이 파일은 아직 `seunguk` 브랜치에만 있고 `main`엔 없음 — 병합 필요 |
