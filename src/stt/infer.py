@@ -676,10 +676,17 @@ def _transcribe_audio(
 # faster-whisper는 HF transformers 체크포인트를 직접 못 읽어서, 먼저 src/stt/export_ct2.py로
 # (LoRA 병합 → CTranslate2 int8 변환) 오프라인 변환해둔 결과물을 읽는다.
 
-# 변환 결과물 우선순위: 1) 로컬 models/stt_finetuned/ct2_int8/(export_ct2.py 산출물)
-# 2) .env의 HF_STT_CT2_REPO(HF Hub에 올린 변환본 — 아직 업로드 여부 미정, Open Issue)
+# 변환 결과물 우선순위: 0) .env의 STT_LOCAL_CACHE_DIR(로컬 디스크 사본, 아래 설명)
+# 1) 로컬 models/stt_finetuned/ct2_int8/(export_ct2.py 산출물) 2) .env의 HF_STT_CT2_REPO
+# (HF Hub에 올린 변환본 — 아직 업로드 여부 미정, Open Issue)
 CT2_LOCAL_DIR = PROJECT_ROOT / "models" / "stt_finetuned" / "ct2_int8"
 HF_STT_CT2_REPO = os.environ.get("HF_STT_CT2_REPO")
+
+# 2026-08-20 실측: 이 프로젝트 폴더(PROJECT_ROOT, 곧 CT2_LOCAL_DIR)가 네트워크 공유
+# 드라이브(CIFS, ~9MB/s)에 있는 환경에서는 model.bin(778MB) 하나 읽는 데만 87초 넘게
+# 걸린다(GPU/CPU 사용률 0%, 순수 네트워크 I/O 대기 — CUDA 초기화가 아니었음). .env에
+# STT_LOCAL_CACHE_DIR로 진짜 로컬 디스크 사본 경로를 지정하면 그걸 최우선으로 쓴다.
+STT_LOCAL_CACHE_DIR = os.environ.get("STT_LOCAL_CACHE_DIR")
 
 _ct2_model = None
 
@@ -690,6 +697,13 @@ def _resolve_ct2_model_path() -> str:
     로컬에도 없고 HF_STT_CT2_REPO도 없으면, 조용히 다른 모델로 폴백하지 않고 바로
     에러를 던진다(EC-04, docs/specs/stt_deploy.md) — 잘못된 모델로 응답하는 게 더 위험하다.
     """
+    if STT_LOCAL_CACHE_DIR:
+        # expanduser() 필수 — 이 값은 계정마다 다른 로컬 경로라 .env에 "~/..."로 적어두고
+        # 계정별($HOME) 홈 디렉터리 기준으로 풀리게 한다(2026-08-21, 이 저장소 폴더를 여러
+        # 계정이 공유해서 절대경로를 하드코딩하면 다른 계정 설정이 깨짐).
+        local_cache = Path(STT_LOCAL_CACHE_DIR).expanduser()
+        if local_cache.exists():
+            return str(local_cache)
     if CT2_LOCAL_DIR.exists():
         return str(CT2_LOCAL_DIR)
     if HF_STT_CT2_REPO:
@@ -713,8 +727,13 @@ def load_ct2_model():
 
     model_path = _resolve_ct2_model_path()
 
-    # HF Spaces CPU Basic(2 vCPU)을 흉내낸 조건 — tests/tts_cpu_inference_test.py와 동일.
-    _ct2_model = WhisperModel(model_path, device="cpu", compute_type="int8", cpu_threads=2)
+    # 2026-08-20: 로컬 GPU 데스크탑에서 개발 중엔 device="cuda"로 — 원래 HF Spaces CPU
+    # Basic(2 vCPU) 배포 조건(device="cpu", cpu_threads=2)을 흉내내던 설정이었는데, 실측상
+    # 짧은 발화 하나에 6~7초씩 걸려 로컬 테스트가 너무 느렸다(사용자 지시로 변경, 2026-08-20).
+    # CPU 배포 속도 실측(목표 5초, 여전히 미달)은 tests/tts_cpu_inference_test.py처럼 별도
+    # 벤치마크로 device="cpu"를 명시해서 재현해야 한다 — 이 함수 자체는 배포 시 다시
+    # device="cpu"로 되돌려야 함(TODO, HF Spaces엔 GPU가 없음).
+    _ct2_model = WhisperModel(model_path, device="cuda", compute_type="int8")
 
     print(f"✅ ChefEar STT(faster-whisper, int8) 로드 완료: {model_path}")
 
