@@ -28,7 +28,8 @@ import soundfile as sf
 import streamlit as st
 
 from orchestration.db import get_client, load_env
-from orchestration.entity_extract import extract_dish_name, extract_substitution_ingredients
+from orchestration.entity_extract import extract_substitution_ingredients
+from orchestration.entity_extract_llm import extract_dish_name_llm
 from orchestration.pipeline import get_precomputed_steps, handle_utterance, manual_fallback
 from orchestration.registration import register_recipe
 
@@ -257,9 +258,8 @@ def process_utterance(text: str) -> None:
     session = st.session_state.pipeline_session
     client = get_client()
 
-    dish_name_guess = extract_dish_name(text)
+    dish_name_guess = extract_dish_name_llm(text)
     requested, excluded = extract_substitution_ingredients(text)
-
     try:
         result = handle_utterance(
             session,
