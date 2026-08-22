@@ -209,20 +209,33 @@ div:has(> button[aria-label="Show password"]), div:has(> button[aria-label="Hide
   display: flex; align-items: flex-end; justify-content: flex-end;
 }
 
-/* 레시피 등록 · 조리 순서 화면(register_steps)에서 입력한 순서 목록 - 기존엔
-   "**1.** 문장"처럼 굵은 숫자 + 평문이라 밋밋했다(2026-08-21 지적). 재료 화면의
-   칩(.ce-chip)과 짝을 맞춰 순서도 카드형 줄로 - 원형 번호 배지 + 문장, 마이 레시피
-   카드(.ce-recipe-name)와 같은 둥근 배지 언어를 재사용한다. */
-.ce-step-list { display:flex; flex-direction:column; gap:8px; }
-.ce-step-row {
-  display:flex; align-items:flex-start; gap:12px; background: var(--surface);
-  border-radius:16px; padding:14px 16px; box-shadow: 0 4px 12px rgba(36,28,21,0.05);
-}
+/* 레시피 등록 · 조리 순서 화면(register_steps)의 순서 번호 배지 - 원형 배지 + 문장,
+   마이 레시피 카드(.ce-recipe-name)와 같은 둥근 배지 언어를 재사용한다(2026-08-21).
+   줄 전체 박스는 이제 st-key-reg_step_row_(위 참고)가 담당한다(2026-08-22, 수정/삭제
+   버튼을 넣으려고 순수 HTML 대신 진짜 컨테이너로 바꾸면서 .ce-step-list/.ce-step-row는
+   더 안 쓰게 됨). */
 .ce-step-num {
   width:26px; height:26px; min-width:26px; border-radius:50%; background: var(--accent);
   color:#fff; display:grid; place-items:center; font-weight:800; font-size:13px; margin-top:1px;
 }
-.ce-step-row p { margin:0; font-size:14.5px; line-height:1.55; color: var(--text); }
+
+/* register_steps 화면의 순서 한 줄(2026-08-22 요청, 수정/삭제 버튼 추가) - 안에 실제
+   st.button이 들어가서 순수 HTML .ce-step-row로 못 감싸므로(cs_step_card/my_recipe_card_와
+   같은 이유) 진짜 컨테이너를 카드로 쓴다. 줄마다 키가 다르니(st-key-reg_step_row_<i>)
+   부분일치 선택자로 짚는다. */
+[data-testid="stVerticalBlock"][class*="st-key-reg_step_row_"] {
+  background: var(--surface); border-radius: 16px; padding: 10px 16px;
+  box-shadow: 0 4px 12px rgba(36,28,21,0.05); gap: 4px;
+}
+/* 수정/삭제 버튼 두 개 - my_recipe_actions_와 같은 이유(2026-08-21, 칸이 넓어질수록
+   버튼이 벌어지는 문제)로 세로 블록 하나에 담고 가로 배치 + 오른쪽 붙임으로 강제한다. */
+[data-testid="stVerticalBlock"][class*="st-key-reg_step_actions_"] {
+  flex-direction: row; flex-wrap: nowrap; gap: 6px; justify-content: flex-end;
+  flex-shrink: 0; width: auto;
+}
+[data-testid="stVerticalBlock"][class*="st-key-reg_step_actions_"] [data-testid="stElementContainer"] {
+  width: auto;
+}
 
 .ce-dots { display:flex; justify-content:center; gap:9px; }
 .ce-dots .d { width:9px; height:9px; border-radius:50%; background: var(--border); }

@@ -18,6 +18,7 @@ from theme import (
     ICON_QUESTION_CIRCLE,
     ICON_SPARKLE,
     ICON_X_CIRCLE,
+    render_back_link,
     render_chat,
     render_chips,
     render_dots,
@@ -125,6 +126,8 @@ def screen_register_dish_name() -> None:
     """FR-06 1단계: 요리명 질문. no_match에서 넘어온 추측값(pending_dish_name)을
     그대로 쓰지 않고 사용자가 직접 확인/수정하게 한다 — 규칙 기반 추출은 틀릴 수 있어서
     (entity_extract.py 참고) 등록처럼 DB에 실제로 남는 데이터는 검증 없이 넘기면 안 된다."""
+    if render_back_link("처음 화면으로"):
+        goto("start")
     st.markdown('<p class="ce-hint">새 레시피 등록 · 1 / 3 · 요리명</p>', unsafe_allow_html=True)
     render_dots(3, 1)
     st.markdown("**어떤 요리인가요?**")
@@ -161,10 +164,12 @@ def screen_register_ingredients() -> None:
         goto("register_intro")
         return
 
+    if render_back_link("처음 화면으로"):
+        goto("start")
     st.markdown(f'<p class="ce-hint">{reg["dish_name"]} · 2 / 3 · 재료</p>', unsafe_allow_html=True)
     render_dots(3, 2)
     st.markdown("**재료를 알려주세요**")
-    render_chips([{"name": ing, "qty": "", "emoji": "🥄"} for ing in reg["ingredients"]])
+    render_chips([{"name": ing, "qty": "", "emoji": "✅"} for ing in reg["ingredients"]])
 
     # 2026-08-21: 이 화면은 텍스트 입력 전용으로 되돌렸다 — STT/TTS(마이크 바·재생바·
     # listen())를 붙였던 버전 대신, 원래의 순수 텍스트 폼(요청받은 화면 그대로)을 쓴다.
@@ -184,15 +189,56 @@ def screen_register_steps() -> None:
         goto("register_intro")
         return
 
+    if render_back_link("처음 화면으로"):
+        goto("start")
     st.markdown(f'<p class="ce-hint">{reg["dish_name"]} · 3 / 3 · 조리 순서</p>', unsafe_allow_html=True)
     render_dots(3, 3)
     st.markdown("**조리 순서를 알려주세요**")
-    if reg["instructions"]:
-        steps_html = "".join(
-            f'<div class="ce-step-row"><span class="ce-step-num">{i}</span><p>{step_text}</p></div>'
-            for i, step_text in enumerate(reg["instructions"], start=1)
-        )
-        st.markdown(f'<div class="ce-step-list">{steps_html}</div>', unsafe_allow_html=True)
+    # 2026-08-22 요청 - 순서 각 줄에 수정/삭제 버튼을 붙인다. register_recipe()의 "confirm"
+    # step(아래 "네, 저장할게요")이 그 시점의 reg["instructions"]를 그대로 읽어서
+    # save_recipe()에 넘기므로(registration.py 참고), 여기서 이 리스트 자체를 고치면
+    # 수정한 문장/삭제로 뺀 항목이 백엔드 저장에도 자동으로 그대로 반영된다 — 별도로
+    # "제외 목록"을 만들어 나중에 필터링할 필요가 없다.
+    editing_idx = st.session_state.get("reg_step_editing_idx")
+    for i, step_text in enumerate(reg["instructions"]):
+        with st.container(key=f"reg_step_row_{i}"):
+            if editing_idx == i:
+                new_text = st.text_input(
+                    "단계 수정", value=step_text, key=f"reg_step_edit_input_{i}", label_visibility="collapsed"
+                )
+                ec1, ec2 = st.columns(2)
+                with ec1:
+                    if st.button(
+                        "저장", key=f"reg_step_edit_save_{i}", type="primary", use_container_width=True
+                    ):
+                        reg["instructions"][i] = new_text.strip()
+                        st.session_state.reg_step_editing_idx = None
+                        st.rerun()
+                with ec2:
+                    if st.button("취소", key=f"reg_step_edit_cancel_{i}", use_container_width=True):
+                        st.session_state.reg_step_editing_idx = None
+                        st.rerun()
+            else:
+                c1, c_actions = st.columns([5, 2])
+                with c1:
+                    st.markdown(
+                        f'<div style="display:flex; align-items:center; gap:12px;">'
+                        f'<span class="ce-step-num">{i + 1}</span>'
+                        f'<p style="margin:0; font-size:14.5px; line-height:1.55; color:var(--text);">{step_text}</p>'
+                        "</div>",
+                        unsafe_allow_html=True,
+                    )
+                with c_actions:
+                    # my_recipes.py의 my_recipe_actions_와 같은 이유(2026-08-21) - st.columns로
+                    # 나누면 칸이 넓어질수록 버튼 두 개가 같이 벌어져서, 세로 블록 하나에
+                    # 담고 CSS로 가로 배치 + 오른쪽 붙임 처리한다(theme.py 참고).
+                    with st.container(key=f"reg_step_actions_{i}"):
+                        if st.button(":material/edit:", key=f"reg_step_edit_{i}", help="수정"):
+                            st.session_state.reg_step_editing_idx = i
+                            st.rerun()
+                        if st.button(":material/delete:", key=f"reg_step_delete_{i}", help="삭제"):
+                            reg["instructions"].pop(i)
+                            st.rerun()
 
     # register_ingredients와 같은 이유로(2026-08-21) 텍스트 입력 전용으로 되돌렸다.
     new_step = st.text_input("순서 추가", key="reg_step_new", placeholder="새 단계 추가")
