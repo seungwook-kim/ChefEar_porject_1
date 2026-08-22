@@ -630,12 +630,18 @@ def render_loading_screen(message: str = "불러오는 중...") -> None:
     render_spacer()
 
 
-def render_brand(show_login: bool = False) -> bool:
+def render_brand(show_login: bool = False, username: str | None = None) -> bool:
     """show_login=True면 "ChefEar" 제목과 같은 줄 오른쪽에 로그인 아이콘 버튼을 나란히
     놓는다(2026-08-21, start 화면 요청 - 원래는 화면 쪽에서 별도 줄로 그렸었는데 제목과
     안 나란해서 여기로 옮김). 로그인 내비게이션(goto)은 이 파일이 모르는 app.py 쪽
     개념이라, 여기서는 버튼이 눌렸는지 bool만 돌려주고 실제 화면 전환은 호출부가 한다
-    (render_back_link()와 같은 패턴)."""
+    (render_back_link()와 같은 패턴).
+
+    username이 주어지면(로그인 상태) 로그인 아이콘 대신 그 아이디를 보여준다
+    (2026-08-22 요청) - 눌렀을 때 어디로 갈지(마이 레시피)도 이 파일이 모르는
+    app.py 쪽 개념이라, 여기서도 클릭 여부만 bool로 돌려준다. 로그아웃은 여기서
+    바로 하지 않고 그 마이 레시피 화면의 로그아웃 버튼에 맡긴다.
+    """
     if not show_login:
         st.markdown(f'<div class="ce-brand"><span class="icon">{ICON_POT}</span> ChefEar</div>', unsafe_allow_html=True)
         return False
@@ -647,6 +653,8 @@ def render_brand(show_login: bool = False) -> bool:
         # 2026-08-21) - my_recipe_actions_와 같은 방식으로 감싸는 세로 블록에
         # justify-content:flex-end를 줘서 칸 안에서 오른쪽 끝으로 민다.
         with st.container(key="brand_login_wrap"):
+            if username:
+                return st.button(f":material/person: {username}", key="brand_login_btn", help="마이 레시피")
             return st.button(":material/login:", key="brand_login_btn", help="로그인")
 
 

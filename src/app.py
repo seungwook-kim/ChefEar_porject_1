@@ -44,7 +44,7 @@ from ui.screens.register import (
     screen_register_steps,
     screen_unclassified,
 )
-from ui.session import goto, init_state
+from ui.session import goto, init_state, restore_login_from_cookie
 
 load_env()
 
@@ -121,11 +121,18 @@ def _warm_up_models() -> None:
 def main() -> None:
     st.set_page_config(page_title="ChefEar", page_icon="🍲", layout="centered", initial_sidebar_state="collapsed")
     init_state()
+    # 새로고침해도 로그인이 풀리지 않게, 저장해둔 로그인 쿠키로 세션을 복원한다
+    # (2026-08-22 요청) - _warm_up_models()보다 먼저 해야 화면이 뜨자마자 바로
+    # 로그인 상태로 보인다.
+    restore_login_from_cookie()
     _warm_up_models()
     inject_css()
     # 로그인 아이콘은 start 화면에서만 "ChefEar" 제목과 나란히 보여준다(2026-08-21 요청).
-    if render_brand(show_login=(st.session_state.screen == "start")):
-        goto("login")
+    # 로그인 상태면 아이콘 대신 아이디를 보여주고, 누르면 로그인 화면 대신 마이
+    # 레시피로 바로 간다(2026-08-22 요청).
+    current_user = st.session_state.current_user
+    if render_brand(show_login=(st.session_state.screen == "start"), username=(current_user or {}).get("username")):
+        goto("my_recipes" if current_user else "login")
     SCREENS[st.session_state.screen]()
 
 
