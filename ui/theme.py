@@ -5,6 +5,7 @@ Streamlit 기본 컴포넌트로 표현하기 어려운 조각만 st.markdown(un
 그린다. docs/ChefEar_PRD_SDD_v0.8.md 3.3의 화면 구성(①~⑥)을 그대로 따른다.
 """
 import base64
+import json
 from pathlib import Path
 from string import Template
 

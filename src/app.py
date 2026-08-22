@@ -569,6 +569,10 @@ def screen_recipe_confirm() -> None:
     # 그대로 두고, 화면 표시만 여기서 줄 단위로 다시 나눈다.
     chat_log = st.session_state.chat_log
     if chat_log and chat_log[-1][0] == "ai":
+        # render_spacer()로 뱃지와의 사이를 벌려서, 텍스트 블록이 위쪽에 바짝 붙지 않고
+        # 아래쪽 "재료 미리보기" 사이 빈 공간의 세로 중앙쯤에 오게 한다(2026-08-22
+        # 스크린샷 지적 — screen_start() 등 다른 화면의 render_spacer() 패턴과 동일).
+        render_spacer()
         render_typewriter_message(
             [view["dish_name"], "조회수 1위 표준 레시피예요.", "이걸로 시작할까요?"],
             key=f"recipe_confirm:{chat_log[-1][1]}",
