@@ -88,10 +88,21 @@ def load_tts_model():
 
     from qwen_tts import Qwen3TTSModel
 
+    # 2026-08-21: models/tts_finetuned/(프로젝트 폴더, 네트워크 드라이브 CIFS ~9MB/s)에 받아둔
+    # 파인튜닝 체크포인트를 그대로 읽으면 STT(model.bin 778MB → 87초)와 같은 문제가 TTS(4.3GB라
+    # 훨씬 오래 걸림)에서 재발한다. HF 캐시(이미 로컬 디스크, ~/.cache/huggingface)에서 진짜
+    # 로컬 전용 경로(~/models/chefear_tts_finetuned)로 한 번 더 복사해서 그걸 최우선으로
+    # 읽는다 — src/stt/infer.py의 STT_LOCAL_CACHE_DIR과 동일한 패턴.
+    local_cache_dir = os.environ.get("TTS_LOCAL_CACHE_DIR")
+    model_source = MODEL_ID
+    use_local = False
+    if local_cache_dir and Path(local_cache_dir).expanduser().exists():
+        model_source = str(Path(local_cache_dir).expanduser())
+        use_local = True
 
     token = os.environ.get("HF_TOKEN")
 
-    if not token:
+    if not use_local and not token:
 
         raise RuntimeError(
             f"HF_TOKEN이 필요함 ({MODEL_ID}는 private repo) — .env에 설정하거나 "
@@ -125,9 +136,9 @@ def load_tts_model():
 
     _model = Qwen3TTSModel.from_pretrained(
 
-        MODEL_ID,
+        model_source,
 
-        token=token,
+        token=None if use_local else token,
 
         device_map=device_map,
 
@@ -137,7 +148,7 @@ def load_tts_model():
     )
 
 
-    print(f"[TTS] 모델 로드 완료: {MODEL_ID} (device={device_map}, attn={attn_impl})")
+    print(f"[TTS] 모델 로드 완료: {model_source} (device={device_map}, attn={attn_impl}, local={use_local})")
 
 
     return _model
