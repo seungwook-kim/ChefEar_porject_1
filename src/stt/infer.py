@@ -749,17 +749,34 @@ def load_ct2_model():
     return _ct2_model
 
 
-def stt_transcribe(audio: "str | Path | np.ndarray", *, sample_rate: int | None = None) -> str:
-    """오디오 하나 -> 인식된 텍스트. faster-whisper(int8, CPU) 기반, HF Spaces 배포용.
+def stt_transcribe(
+    audio: "str | Path | np.ndarray",
+    *,
+    sample_rate: int | None = None,
+    ingredient_context: Optional[Union[str, Sequence[str]]] = None,
+) -> str:
+    """오디오 하나 -> 인식된 텍스트. faster-whisper(int8) 기반, HF Spaces 배포용.
 
     app.py가 직접 호출할 곳 — orchestration.pipeline.handle_utterance()에 반환값을
     그대로 넘기면 된다.
+
+    2026-08-21: 이 이름의 함수가 두 개(이 함수 + 아래 stt_transcribe_with_context())
+    존재해서 파이썬이 나중 정의만 남기고 이 함수를 덮어써버린 게 실측으로 확인됨 —
+    app.py는 여전히 이 시그니처(numpy 배열+sample_rate)로 호출하는데 실제로는 무거운
+    4bit 모델 경로(stt_transcribe_with_context, CUDA 전용이라 HF Spaces CPU Basic에서
+    로드 자체가 안 됨)가 대신 불려서 TypeError로 죽었다. 이름 충돌 해소하면서, 하주성님이
+    stt_transcribe_with_context()에 만들어둔 문맥 기반 후처리(normalize_stt_text/
+    correct_high_risk_with_context, 둘 다 순수 텍스트 함수라 모델과 무관)를 이 배포용
+    경로에도 그대로 적용되게 옮겨왔다 — 기능은 잃지 않으면서 무거운 모델은 안 쓴다.
 
     Parameters
     ----------
     audio
         파일 경로(mp3/wav 등) 또는 numpy 파형 배열. 배열로 줄 경우 sample_rate가 필수이며,
         16kHz가 아니면 librosa로 16kHz 모노로 리샘플링한 뒤 넘긴다(EC-03).
+    ingredient_context
+        현재 레시피 재료 정보(문자열 또는 리스트). 있으면 고위험 숫자 보정까지 적용, 없으면
+        단위 표기 정규화만 적용(둘 다 순수 텍스트 후처리라 모델 로딩과 무관).
 
     Returns
     -------
@@ -781,27 +798,34 @@ def stt_transcribe(audio: "str | Path | np.ndarray", *, sample_rate: int | None 
     segments, _info = model.transcribe(audio, language="ko", vad_filter=True)
 
     text = " ".join(segment.text.strip() for segment in segments).strip()
+    if not text:
+        return text
 
+    text = normalize_stt_text(text)
+    text = correct_high_risk_with_context(text, ingredient_context)
     return text
 
 
 # ============================================================
 # 100개 음성 일괄 테스트
-# 서비스 파이프라인용 STT 함수
+# 배치 평가(run_batch_test)/파일 경로 입력 전용 — 4bit 모델(load_stt_model) 사용
 # ============================================================
 
-def stt_transcribe(
+def stt_transcribe_with_context(
     audio_path,
     ingredient_context: Optional[
         Union[str, Sequence[str]]
     ] = None,
 ) -> str:
     """
-    ChefEar 서비스에서 사용할 STT 함수입니다.
+    배치 평가·오프라인 확인용 STT 함수입니다(4bit QLoRA + bitsandbytes, CUDA 전용).
+
+    실시간 서비스 경로(app.py)는 이 함수가 아니라 위의 stt_transcribe()를 쓴다 — 이 함수는
+    GPU 없는 HF Spaces CPU Basic에서 로드 자체가 안 되기 때문(위 load_stt_model() 참고).
 
     예
     --
-    prediction = stt_transcribe(
+    prediction = stt_transcribe_with_context(
         audio_path="user.wav",
         ingredient_context=[
             "소고기다짐육 100g",
