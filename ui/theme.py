@@ -5,7 +5,6 @@ Streamlit 기본 컴포넌트로 표현하기 어려운 조각만 st.markdown(un
 그린다. docs/ChefEar_PRD_SDD_v0.8.md 3.3의 화면 구성(①~⑥)을 그대로 따른다.
 """
 import base64
-import json
 from pathlib import Path
 from string import Template
 
@@ -566,7 +565,6 @@ _MIC_BODY = (
 ICON_MIC_MD = _SVG.format(size=22, body=_MIC_BODY)
 ICON_MIC_LG = _SVG.format(size=34, body=_MIC_BODY)
 ICON_PLAY = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 3 20 12 6 21 6 3"/></svg>'
-ICON_PAUSE = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="3" width="5" height="18" rx="1.5"/><rect x="14" y="3" width="5" height="18" rx="1.5"/></svg>'
 ICON_CHEVRON_LEFT = _SVG.format(size=12, body='<polyline points="15 18 9 12 15 6"/>')
 
 
@@ -784,27 +782,20 @@ _AUDIO_PLAYER_TEMPLATE = Template("""
   * { margin:0; padding:0; box-sizing:border-box;
       font-family: "Pretendard", -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
   .player { display:flex; align-items:center; gap:14px; background:#fbf6ec;
-    border-radius:999px; padding:10px 14px; }
-  .play-btn { width:38px; height:38px; min-width:38px; border-radius:50%; border:none; cursor:pointer;
-    background:#fbebd3; color:#ee7b36; display:grid; place-items:center; }
-  .play-btn:hover { background:#f6dfb8; }
+    border-radius:999px; padding:10px 16px; }
   .wave { flex:1; display:flex; align-items:center; gap:3px; height:26px; overflow:hidden; }
   .wave span { flex:1 1 0; min-width:0; border-radius:2px; background:#ee7b36; opacity:.4;
     align-self:center; transition: opacity .1s linear; }
   .wave span.played { opacity:1; }
 </style>
 <div class="player">
-  <button class="play-btn" id="playbtn" type="button" aria-label="재생">$play_icon</button>
   <span class="wave" id="wave">$bars</span>
 </div>
 <audio id="audio" src="$audio_src" preload="auto" autoplay></audio>
 <script>
-  const btn = document.getElementById('playbtn');
   const audio = document.getElementById('audio');
   const wave = document.getElementById('wave');
   const bars = wave.querySelectorAll('span');
-  const iconPlay = $play_icon_js;
-  const iconPause = $pause_icon_js;
 
   // 실제 재생 위치에 맞춰 막대를 하나씩 "지나갔다"는 색으로 칠한다(진짜 파형 진행 표시).
   // 막대 높이 자체는 이미 실제 오디오 진폭으로 그려져 있다(render_audio_player 참고),
@@ -816,18 +807,13 @@ _AUDIO_PLAYER_TEMPLATE = Template("""
     bars.forEach(function (bar, i) { bar.classList.toggle('played', i < played); });
   }
   audio.addEventListener('timeupdate', updateProgress);
-
-  btn.addEventListener('click', function () {
-    if (audio.paused) { audio.play(); } else { audio.pause(); }
-  });
-  audio.addEventListener('play', function () { btn.innerHTML = iconPause; });
-  audio.addEventListener('pause', function () { btn.innerHTML = iconPlay; });
   audio.addEventListener('ended', function () {
-    btn.innerHTML = iconPlay;
     bars.forEach(function (bar) { bar.classList.remove('played'); });
   });
-  // 자동재생이 브라우저 정책으로 막히면(autoplay 속성만으론 항상 보장되지 않음) 그냥
-  // 대기 상태로 남고, 사용자가 재생 버튼을 눌러 시작할 수 있다.
+  // 2026-08-21: 재생 버튼을 없앴다(요청) - 자동재생만 믿는다. 브라우저 자동재생 정책으로
+  // 막히면(드묾 - 사용자가 이미 페이지와 상호작용한 뒤라 대부분 허용됨) 이 위젯 안에서는
+  // 더 이상 수동으로 재생을 시작할 방법이 없다 - "다시" 음성 명령/버튼으로 다시 이
+  // 화면에 들어오면 재생을 다시 시도한다.
   audio.play().catch(function () {});
 </script>
 """)
@@ -863,19 +849,23 @@ def render_audio_player(audio_path: str | Path, height: int = 64, nonce: int | s
     안 어울린다 — 브라우저 네이티브 미디어 컨트롤은 CSS로 커스터마이징이 사실상 불가능하다
     (표준화된 크로스 브라우저 방법이 없음, Chromium의 ::-webkit-media-controls는 비표준·
     브라우저 업데이트마다 깨질 수 있음). 그래서 st.iframe()으로 이 카드와 똑같은
-    모양(둥근 배경 + 원형 재생 버튼 + 막대 파형)의 HTML/JS를 직접 그리고, 클릭하면 JS로
-    <audio>를 재생/정지하는 방식으로 만들었다. render_step_card()의 장식용 재생바는
-    건드리지 않고, 그 아래에 이 진짜 위젯을 별도로 놓는다.
+    모양(둥근 배경 + 막대 파형)의 HTML/JS를 직접 그려서 자동재생한다. render_step_card()의
+    장식용 재생바는 건드리지 않고, 그 아래에 이 진짜 위젯을 별도로 놓는다.
 
-    iframe이라 부모 문서의 CSS 변수(:root)를 못 물려받아서, .ce-player/.ce-play-btn/
-    .ce-wave와 같은 색상값을 여기서 다시 하드코딩했다(위 CSS :root의 --surface-alt/
-    --accent/--accent-soft 값과 동일 — 그쪽이 바뀌면 여기도 같이 바꿔야 함).
+    2026-08-21: 원래는 파형 옆에 원형 재생/정지 버튼도 있었는데(눌러서 수동 재생/정지),
+    자동재생만으로 충분하다는 요청으로 버튼은 없애고 파형만 남겼다 - 이제 이 위젯은
+    순전히 "재생 중" 진행 표시용이고 클릭해도 아무 반응이 없다.
+
+    iframe이라 부모 문서의 CSS 변수(:root)를 못 물려받아서, .ce-player/.ce-wave와
+    같은 색상값을 여기서 다시 하드코딩했다(위 CSS :root의 --surface-alt/--accent/
+    --accent-soft 값과 동일 — 그쪽이 바뀌면 여기도 같이 바꿔야 함).
 
     막대 높이는 _compute_wave_bars()로 이 파일의 실제 진폭을 읽어서 그린다(고정된 가짜
     파형이 아님). <audio autoplay>를 넣어서 "다음"/"이전"으로 이 위젯이 새로 렌더링될
     때마다(=화면이 다시 그려질 때마다) 자동 재생을 시도한다 — 브라우저 자동재생 정책상
     100% 보장되진 않지만(사용자가 이미 페이지와 상호작용한 뒤라 대부분 허용됨), 막히면
-    조용히 대기 상태로 남고 재생 버튼으로 수동 시작 가능하다.
+    조용히 대기 상태로 남는다 - 2026-08-21 요청으로 재생 버튼을 없애서, 막혔을 때 이
+    위젯 안에서 수동으로 다시 시작할 방법은 이제 없다(파형만 표시, 클릭 불가).
 
     nonce: "다시"(재청취)처럼 같은 파일을 같은 단계에서 다시 재생해야 할 때 쓴다 — audio_src가
     이전 렌더와 완전히 같은 문자열이면 Streamlit 프론트엔드(React)가 iframe의 srcDoc이
@@ -889,11 +879,8 @@ def render_audio_player(audio_path: str | Path, height: int = 64, nonce: int | s
     bar_heights = _compute_wave_bars(audio_path)
     bars_html = "".join(f'<span style="height:{h}px"></span>' for h in bar_heights)
     html = f"<!-- replay-nonce:{nonce} -->\n" + _AUDIO_PLAYER_TEMPLATE.substitute(
-        play_icon=ICON_PLAY,
         bars=bars_html,
         audio_src=audio_src,
-        play_icon_js=json.dumps(ICON_PLAY),
-        pause_icon_js=json.dumps(ICON_PAUSE),
     )
     st.iframe(html, height=height)
 
