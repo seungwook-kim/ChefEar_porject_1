@@ -104,7 +104,9 @@ def speak(
             # 2026-08-19 팀 결정(docs/decisions.md #2)으로 배포가 GPU 데스크탑 상시 노출로
             # 확정되면서 tts.infer.load_tts_model()이 CPU 폴백 없이 GPU를 필수로 요구한다 —
             # "로컬 CPU라 오래 걸릴 수 있어요" 문구는 더 이상 해당하지 않아 제거했다.
-            with st.spinner("음성 합성 중이에요... 잠시만 기다려주세요."):
+            # 2026-08-22 요청 — 버튼 바로 아래 "음성 합성 중이에요..." 글씨가 튀어
+            # 보인다는 지적으로 문구는 없애고 스피너 아이콘만 남긴다.
+            with st.spinner(""):
                 # prefetch_next_step_audio()의 백그라운드 스레드와 동시에 GPU 모델을
                 # 호출하지 않도록 _TTS_LOCK으로 직렬화(위 정의부 주석 참고). 프리페치가
                 # 이미 이 문구를 캐싱해뒀다면 락을 기다리는 동안 아래 audio_path.exists()가

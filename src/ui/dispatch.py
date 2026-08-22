@@ -14,6 +14,14 @@ from ui.recipe_view import refresh_recipe_view
 from ui.session import goto
 from ui.voice_io import speak
 
+# cooking_step에서 "다음"으로 마지막 단계를 넘어가면(advance_step()이 step=None을
+# 돌려줌, orchestration/pipeline.py 참고) 안내만 하고 같은 화면에 머무르는 대신 별도
+# 완료 화면(cooking_complete)으로 보낸다(2026-08-22 요청 — "요리가 완성됐어요!" 화면).
+# screens/cooking.py의 screen_cooking_complete()가 _render_cached_speech()로 이
+# 문구를 다시 찾아 들려줘야 해서 문구 자체를 여기(더 아래 계층)에 두고 화면 쪽에서
+# import해 쓴다(screens -> dispatch 의존 방향, ui/README.md 참고).
+COOKING_COMPLETE_MESSAGE = "요리가 완성됐어요! 수고하셨어요."
+
 
 def process_utterance(text: str) -> None:
     st.session_state.chat_log.append(("user", text))
@@ -56,11 +64,17 @@ def process_utterance(text: str) -> None:
     if intent == "조회":
         if "message" in result:  # DISH_NOT_FOUND_MESSAGE — 표준 데이터 밖(시나리오 D)
             st.session_state.pending_dish_name = dish_name_guess
-            speak(result["message"])
+            # 2026-08-22 리포트 — 여기서 그리는 재생바가 goto()의 rerun에 곧장 지워져
+            # "이전 화면 하단에 떴다 사라짐" 깜빡임만 남긴다(recipe_confirm과 같은 문제).
+            # 도착 화면(no_match)이 chat_log의 마지막 ai 메시지를 _render_cached_speech()로
+            # 다시 찾아 들려주므로 hidden=True로 화면 없는 자동재생만 한다.
+            speak(result["message"], hidden=True)
             goto("no_match")
             return
         refresh_recipe_view(force=True)
-        speak(f'{result["dish_name"]}, 조회수 1위 표준 레시피예요. 이걸로 시작할까요?')
+        # 위와 같은 이유 — 도착 화면(recipe_confirm)이 chat_log의 마지막 ai 메시지를
+        # _render_cached_speech()로 다시 들려준다.
+        speak(f'{result["dish_name"]}, 조회수 1위 표준 레시피예요. 이걸로 시작할까요?', hidden=True)
         goto("recipe_confirm")
         return
 
@@ -68,8 +82,16 @@ def process_utterance(text: str) -> None:
         step = result.get("step")
         if result.get("no_previous"):
             speak("1단계예요, 이전 단계가 없어요.")
+            goto("cooking_step")
         elif step is None:
-            speak("마지막 단계까지 다 왔어요. 수고하셨어요!")
+            # 마지막 단계에서 "다음" -> advance_step()이 더 이상 존재하지 않는 단계를
+            # 찾다 step=None을 돌려준 경우(2026-08-22 요청) — 안내만 하고 cooking_step에
+            # 머무르는 대신 완료 화면으로 보낸다. screen_cooking_complete()가 이 문구를
+            # _render_cached_speech()로 다시 찾아 들려주므로 여기서는 hidden=True로 화면
+            # 없는 자동재생만 하고, 실제로 들리는 소리는 도착 화면 쪽에 맡긴다(recipe_confirm/
+            # register_steps와 같은 패턴).
+            speak(COOKING_COMPLETE_MESSAGE, hidden=True)
+            goto("cooking_complete")
         else:
             # "다시"는 같은 파일을 다시 재생하는 거라 오디오 콘텐츠 자체가 안 바뀌어서
             # nonce 없이는 iframe이 안 바뀐 걸로 보고 autoplay가 재실행되지 않는다. "다음"/
@@ -83,14 +105,26 @@ def process_utterance(text: str) -> None:
             # 화면에 그대로 남아있는 그 단계 카드의 캐시 오디오를 "새로 로드된 것"으로 보고
             # 다시 자동재생해서, 방금 speak()로 들려준 안내 음성과 동시에 겹쳐 들렸다. 실제
             # 단계 오디오를 다시 보여주는 이 분기에서만 nonce를 올려서 막는다.
+            #
+            # 2026-08-22 추가 리포트: 여기서 그리는 speak()의 재생바도 recipe_confirm과
+            # 같은 이유로 goto()의 rerun에 곧장 지워져 "떴다 사라짐" 깜빡임만 남긴다 —
+            # 도착 화면(cooking_step)이 render_step_card()로 같은 단계 오디오를 캐시에서
+            # 다시 찾아 들려주므로 hidden=True로 화면 없는 자동재생만 한다.
             st.session_state["_audio_replay_nonce"] = st.session_state.get("_audio_replay_nonce", 0) + 1
-            speak(step["text"], recipe_id=session.get("current_recipe_id"), step_number=step.get("step_number"))
-        goto("cooking_step")
+            speak(
+                step["text"],
+                recipe_id=session.get("current_recipe_id"),
+                step_number=step.get("step_number"),
+                hidden=True,
+            )
+            goto("cooking_step")
         return
 
     if intent == "재료대체":
         if result.get("match_type") == "none":
-            speak(result["message"])
+            # 위 조회/DISH_NOT_FOUND 분기와 같은 이유(2026-08-22) — no_match가 chat_log의
+            # 마지막 ai 메시지를 다시 들려주므로 hidden=True.
+            speak(result["message"], hidden=True)
             goto("no_match")
             return
         refresh_recipe_view(force=True)
@@ -115,7 +149,9 @@ def process_utterance(text: str) -> None:
         return
 
     # 알 수 없는 intent(방어적 처리) — 서비스가 죽는 대신 fallback으로.
-    speak("죄송해요, 잘 처리하지 못했어요. 다시 한 번 말씀해주시겠어요?")
+    # 위와 같은 이유(2026-08-22) — unclassified가 chat_log의 마지막 ai 메시지를 다시
+    # 들려주므로 hidden=True.
+    speak("죄송해요, 잘 처리하지 못했어요. 다시 한 번 말씀해주시겠어요?", hidden=True)
     goto("unclassified")
 
 
@@ -133,18 +169,25 @@ def fallback_buttons(key_prefix: str) -> None:
                 result = manual_fallback(session, button, client=client)
                 if result.get("no_previous"):
                     speak("1단계예요, 이전 단계가 없어요.")
+                    goto("cooking_step")
                 elif result.get("step") is None:
-                    speak("마지막 단계까지 다 왔어요. 수고하셨어요!")
+                    # process_utterance()의 같은 분기와 동일한 이유(2026-08-22) — 마지막
+                    # 단계에서 "다음" 버튼을 누르면 완료 화면으로 보낸다.
+                    speak(COOKING_COMPLETE_MESSAGE, hidden=True)
+                    goto("cooking_complete")
                 else:
                     # process_utterance()의 같은 분기와 동일한 이유(2026-08-22) — 실제 단계
-                    # 오디오를 다시 보여줄 때만 nonce를 올린다. "1단계예요..."/"마지막
-                    # 단계까지..." 안내는 화면의 단계가 안 바뀌는데 nonce만 올리면, rerun
-                    # 후 그 자리에 남아있는 단계 카드의 캐시 오디오가 다시 자동재생되면서
-                    # 방금 들려준 안내 음성과 겹쳐 들린다.
+                    # 오디오를 다시 보여줄 때만 nonce를 올린다. "1단계예요..." 안내는 화면의
+                    # 단계가 안 바뀌는데 nonce만 올리면, rerun 후 그 자리에 남아있는 단계
+                    # 카드의 캐시 오디오가 다시 자동재생되면서 방금 들려준 안내 음성과
+                    # 겹쳐 들린다. speak() 자체도 hidden=True — 도착 화면(cooking_step)이
+                    # render_step_card()로 같은 오디오를 캐시에서 다시 들려주므로, 여기서
+                    # 그리는 재생바는 rerun에 곧장 지워지는 "떴다 사라짐" 깜빡임만 남긴다.
                     st.session_state["_audio_replay_nonce"] = st.session_state.get("_audio_replay_nonce", 0) + 1
                     speak(
                         result["step"]["text"],
                         recipe_id=session.get("current_recipe_id"),
                         step_number=result["step"].get("step_number"),
+                        hidden=True,
                     )
-                goto("cooking_step")
+                    goto("cooking_step")

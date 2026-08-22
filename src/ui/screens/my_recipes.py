@@ -79,42 +79,46 @@ def screen_my_recipes() -> None:
         return
 
     confirm_id = st.session_state.confirm_delete_id
-    for row in rows:
-        with st.container(key=f"my_recipe_card_{row['id']}"):
-            c1, c_actions = st.columns([5, 2])
-            with c1:
-                st.markdown(
-                    f'<div class="ce-recipe-name"><span class="icon">{ICON_BASKET_SM}</span>{row["dish_name"]}</div>',
-                    unsafe_allow_html=True,
-                )
-            with c_actions:
-                # st.columns([1,1])는 c_actions 칸 자체가 넓어지면 두 버튼도 같이
-                # 벌어진다(각 컬럼이 그 절반씩을 차지) - 화면이 넓을수록 간격이
-                # 커지는 문제가 실측으로 확인됐다(2026-08-21). 컬럼 대신 세로
-                # 블록 하나에 버튼 둘을 넣고 CSS로 가로 정렬 + 오른쪽 붙임
-                # 처리해서, 화면 폭과 무관하게 항상 붙어있게 한다.
-                with st.container(key=f"my_recipe_actions_{row['id']}"):
-                    if st.button(":material/edit:", key=f"edit_{row['id']}", help="수정"):
-                        st.session_state.editing_recipe_id = row["id"]
-                        goto("edit_recipe")
-                    if st.button(":material/delete:", key=f"delete_{row['id']}", help="삭제"):
-                        st.session_state.confirm_delete_id = row["id"]
-                        st.rerun()
+    # 2026-08-22 요청 - 레시피가 많아지면 목록이 화면 밖으로 길게 늘어나던 걸, 일정
+    # 높이가 넘으면 그 안에서만 스크롤되게 감싼다(CSS는 theme.py의 st-key-my_recipes_list
+    # 선택자 참고).
+    with st.container(key="my_recipes_list"):
+        for row in rows:
+            with st.container(key=f"my_recipe_card_{row['id']}"):
+                c1, c_actions = st.columns([5, 2])
+                with c1:
+                    st.markdown(
+                        f'<div class="ce-recipe-name"><span class="icon">{ICON_BASKET_SM}</span>{row["dish_name"]}</div>',
+                        unsafe_allow_html=True,
+                    )
+                with c_actions:
+                    # st.columns([1,1])는 c_actions 칸 자체가 넓어지면 두 버튼도 같이
+                    # 벌어진다(각 컬럼이 그 절반씩을 차지) - 화면이 넓을수록 간격이
+                    # 커지는 문제가 실측으로 확인됐다(2026-08-21). 컬럼 대신 세로
+                    # 블록 하나에 버튼 둘을 넣고 CSS로 가로 정렬 + 오른쪽 붙임
+                    # 처리해서, 화면 폭과 무관하게 항상 붙어있게 한다.
+                    with st.container(key=f"my_recipe_actions_{row['id']}"):
+                        if st.button(":material/edit:", key=f"edit_{row['id']}", help="수정"):
+                            st.session_state.editing_recipe_id = row["id"]
+                            goto("edit_recipe")
+                        if st.button(":material/delete:", key=f"delete_{row['id']}", help="삭제"):
+                            st.session_state.confirm_delete_id = row["id"]
+                            st.rerun()
 
-            if confirm_id == row["id"]:
-                st.warning(f'"{row["dish_name"]}"를 정말 삭제할까요? 되돌릴 수 없어요.')
-                cc1, cc2 = st.columns(2)
-                with cc1:
-                    if st.button(
-                        "네, 삭제할게요", key=f"confirm_delete_{row['id']}", type="primary", use_container_width=True
-                    ):
-                        delete_recipe(row["id"], client=client)
-                        st.session_state.confirm_delete_id = None
-                        st.rerun()
-                with cc2:
-                    if st.button("취소", key=f"cancel_delete_{row['id']}", use_container_width=True):
-                        st.session_state.confirm_delete_id = None
-                        st.rerun()
+                if confirm_id == row["id"]:
+                    st.warning(f'"{row["dish_name"]}"를 정말 삭제할까요? 되돌릴 수 없어요.')
+                    cc1, cc2 = st.columns(2)
+                    with cc1:
+                        if st.button(
+                            "네, 삭제할게요", key=f"confirm_delete_{row['id']}", type="primary", use_container_width=True
+                        ):
+                            delete_recipe(row["id"], client=client)
+                            st.session_state.confirm_delete_id = None
+                            st.rerun()
+                    with cc2:
+                        if st.button("취소", key=f"cancel_delete_{row['id']}", use_container_width=True):
+                            st.session_state.confirm_delete_id = None
+                            st.rerun()
 
 
 def screen_edit_recipe() -> None:

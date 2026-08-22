@@ -183,6 +183,14 @@ div:has(> button[aria-label="Show password"]), div:has(> button[aria-label="Hide
 .ce-recipe-name { display:flex; align-items:center; gap:8px; font-size:15px; font-weight:700; color: var(--text); }
 .ce-recipe-name .icon { color: var(--accent); display:inline-flex; }
 
+/* 마이 레시피 목록 전체를 감싸는 컨테이너 - 레시피 개수가 많아지면 화면 밖으로 한없이
+   길어지던 걸, 일정 높이(60vh)가 넘으면 그 안에서만 스크롤되게 한다(2026-08-22 요청).
+   overflow가 오른쪽 카드 그림자(box-shadow)를 잘라먹지 않도록 카드 padding만큼
+   여유(4px)를 좌우에 더 준다. */
+[data-testid="stVerticalBlock"][class*="st-key-my_recipes_list"] {
+  max-height: 60vh; overflow-y: auto; padding: 4px; margin: -4px;
+}
+
 /* 마이 레시피 카드의 수정/삭제 버튼 두 개 - st.columns로 나누면 감싸는 칸이 넓어질
    때마다 두 버튼도 같이 벌어져서(각자 칸의 절반씩 차지) 화면이 넓을수록 간격이
    커지는 문제가 있었다(2026-08-21, 실측). 대신 세로 블록 하나(stVerticalBlock)에
@@ -924,9 +932,8 @@ def render_step_card(
     순서대로 넣으면 진짜로 같은 흰 박스 안에 nesting된다(2026-08-19, 재생바를 카드
     안에 넣어달라는 요청으로 구조 변경).
 
-    audio_path가 주어지면 그 wav를 render_audio_autoplay()로 카드 안에서 자동재생한다
-    (2026-08-22부터 재생 버튼/파형 UI는 없앰 — 화면엔 안 보이고 소리만 남). audio_path가
-    None이면 아무것도 안 그린다.
+    audio_path가 주어지면 그 wav를 render_audio_player()로 카드 안에서 자동재생하고
+    재생바(파형)도 그대로 보여준다(2026-08-22). audio_path가 None이면 아무것도 안 그린다.
 
     2026-08-21: 점을 눌러 그 단계로 바로 이동하고, 단계 텍스트 양옆 화살표로
     이전/다음 단계로 넘어갈 수 있게 해달라는 요청 - 이 함수는 순수 표시만 담당하고
@@ -956,19 +963,23 @@ def render_step_card(
         with mid:
             st.markdown(f'<p class="ce-step-title">{step_text}</p>', unsafe_allow_html=True)
         with arrow_r:
+            # 2026-08-22 요청: 마지막 단계에서도 화살표를 막아두지 않는다 — 이 화살표가
+            # "완료"로 넘어가는 유일한 화면 접점이 되도록, current_step==total일 때도
+            # 눌리게 두고 nav_target을 total+1(범위 밖)로 돌려준다. 호출부
+            # (screen_cooking_step())가 그 값을 "요리 완성" 신호로 해석해서 완료 화면으로
+            # 보낸다 — 이 함수 자체는 orchestration을 몰라서 여기서 직접 화면 전환은 안 한다.
             if st.button(
                 ":material/chevron_right:", key="cs_next_arrow", help="다음 단계",
-                disabled=current_step >= total, use_container_width=True,
+                use_container_width=True,
             ):
                 nav_target = current_step + 1
 
-        # 2026-08-22 요청: 재생 버튼(원형 버튼+파형) 자체를 화면에서 없앤다. 실제 오디오가
-        # 있을 땐 render_audio_player() 대신 화면 없는 render_audio_autoplay()를 써서
-        # 음성 자동재생은 그대로 유지하고 버튼/파형 UI만 뺀다. 오디오가 아직 없을 때의
-        # 장식용 정지 파형(_player_html())도 같이 없앤다 — 안 눌리는 가짜 버튼을 남겨둘
-        # 이유가 없어서다.
+        # 2026-08-22 재요청: 단계 텍스트 밑에 재생바(파형)가 보여야 한다는 요청으로
+        # render_audio_player()를 다시 쓴다(같은 날 있었던 "재생 버튼 없애기" 요청은
+        # 화면 전환 중 반짝이는 별개의 speak() 호출들에만 적용 — voice_io.speak()의
+        # hidden=True 파라미터 참고, 이 카드 자체의 상시 표시 재생바와는 다른 문제).
         if audio_path is not None:
-            render_audio_autoplay(audio_path, nonce=audio_nonce)
+            render_audio_player(audio_path, nonce=audio_nonce)
     return nav_target
 
 

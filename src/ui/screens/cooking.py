@@ -5,6 +5,8 @@ from __future__ import annotations
 import streamlit as st
 
 from theme import (
+    ICON_CHECK_CIRCLE,
+    render_back_link,
     render_badge,
     render_big_mic,
     render_chat,
@@ -14,10 +16,10 @@ from theme import (
     render_step_card,
     render_typewriter_message,
 )
-from ui.dispatch import fallback_buttons, process_utterance
+from ui.dispatch import COOKING_COMPLETE_MESSAGE, fallback_buttons, process_utterance
 from ui.recipe_view import _ingredients_to_chips, refresh_recipe_view
-from ui.session import goto
-from ui.voice_io import _AUDIO_DIR, listen, prefetch_next_step_audio, speak
+from ui.session import _DEFAULT_PIPELINE_SESSION, goto
+from ui.voice_io import _AUDIO_DIR, _render_cached_speech, listen, prefetch_next_step_audio, speak
 
 
 def screen_start() -> None:
@@ -62,6 +64,10 @@ def screen_recipe_confirm() -> None:
     # 그대로 두고, 화면 표시만 여기서 줄 단위로 다시 나눈다.
     chat_log = st.session_state.chat_log
     if chat_log and chat_log[-1][0] == "ai":
+        # dispatch.py가 이 화면으로 넘어오기 직전 speak(..., hidden=True)로 미리 합성/캐싱만
+        # 해둔 문구를 여기서 다시 찾아 들려준다(2026-08-22 리포트 — 화면 전환 중 이전
+        # 화면 하단에 재생바가 "떴다 사라짐" 깜빡이는 문제, no_match/unclassified와 같은 패턴).
+        _render_cached_speech(chat_log[-1][1])
         # render_spacer()로 뱃지와의 사이를 벌려서, 텍스트 블록이 위쪽에 바짝 붙지 않고
         # 아래쪽 "재료 미리보기" 사이 빈 공간의 세로 중앙쯤에 오게 한다(2026-08-22
         # 스크린샷 지적 — screen_start() 등 다른 화면의 render_spacer() 패턴과 동일).
@@ -154,10 +160,26 @@ def screen_cooking_step() -> None:
     # 대신 view["steps"]에서 바로 읽는다(get_precomputed_steps()로 이미 전체를
     # 가져와서 recipe_view에 캐싱돼 있어 추가 조회가 필요 없다).
     if nav_target is not None:
+        if nav_target > total:
+            # 마지막 단계에서 다음 화살표를 누른 경우(theme.py render_step_card() 참고,
+            # 2026-08-22 요청) — view["steps"]에 없는 단계라 인덱싱하면 IndexError가 나므로
+            # 여기서 걸러서 완료 화면으로 보낸다. speak()는 hidden=True — 도착 화면
+            # (cooking_complete)이 _render_cached_speech()로 이 문구를 다시 찾아 들려준다.
+            speak(COOKING_COMPLETE_MESSAGE, hidden=True)
+            goto("cooking_complete")
+            return
         session["step_number"] = nav_target
         st.session_state["_audio_replay_nonce"] = st.session_state.get("_audio_replay_nonce", 0) + 1
         target_step = view["steps"][nav_target - 1]
-        speak(target_step["text"], recipe_id=view["recipe_id"], step_number=target_step.get("step_number", nav_target))
+        # 2026-08-22 리포트 — 여기서 그리는 재생바도 recipe_confirm과 같은 이유로 goto()의
+        # rerun에 곧장 지워져 "떴다 사라짐" 깜빡임만 남긴다. 도착 화면이 render_step_card()로
+        # 같은 단계 오디오를 캐시에서 다시 들려주므로 hidden=True로 화면 없는 자동재생만 한다.
+        speak(
+            target_step["text"],
+            recipe_id=view["recipe_id"],
+            step_number=target_step.get("step_number", nav_target),
+            hidden=True,
+        )
         goto("cooking_step")
 
     st.markdown("**오늘의 재료**")
@@ -178,3 +200,32 @@ def screen_cooking_step() -> None:
         process_utterance(text)
 
     fallback_buttons("cooking_step")
+
+
+def screen_cooking_complete() -> None:
+    """마지막 단계까지 다 왔을 때 보여주는 완료 화면(2026-08-22 요청) — 이전엔 "마지막
+    단계까지 다 왔어요"를 음성으로만 안내하고 cooking_step 화면에 그대로 머물러서, 요리가
+    끝났다는 게 화면으로는 드러나지 않았다. register_steps -> screen_complete()와 같은
+    패턴: 전환 직전(dispatch.py)에서 COOKING_COMPLETE_MESSAGE를 hidden=True로 미리
+    합성/캐싱해두고, 여기서 _render_cached_speech()로 같은 캐시를 다시 찾아 들려준다.
+    """
+    dish_name = (st.session_state.recipe_view or {}).get("dish_name") or "레시피"
+    if render_back_link("처음으로"):
+        goto("start")
+
+    render_spacer()
+    st.markdown(f'<div class="ce-lead-icon positive">{ICON_CHECK_CIRCLE}</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="ce-center"><h1>요리가 완성됐어요!</h1>'
+        f"<p>{dish_name}, 수고하셨어요.</p></div>",
+        unsafe_allow_html=True,
+    )
+    _render_cached_speech(COOKING_COMPLETE_MESSAGE)
+    render_spacer()
+
+    if st.button("처음 화면으로", type="primary", use_container_width=True):
+        st.session_state.pipeline_session = dict(_DEFAULT_PIPELINE_SESSION)
+        st.session_state.chat_log = []
+        st.session_state.recipe_view = None
+        st.session_state.pending_dish_name = None
+        goto("start")

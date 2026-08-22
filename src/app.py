@@ -33,7 +33,7 @@ import streamlit as st
 
 from orchestration.db import load_env
 from theme import inject_css, render_brand
-from ui.screens.cooking import screen_cooking_step, screen_recipe_confirm, screen_start
+from ui.screens.cooking import screen_cooking_complete, screen_cooking_step, screen_recipe_confirm, screen_start
 from ui.screens.my_recipes import screen_edit_recipe, screen_login, screen_my_recipes
 from ui.screens.register import (
     screen_complete,
@@ -52,6 +52,7 @@ SCREENS = {
     "start": screen_start,
     "recipe_confirm": screen_recipe_confirm,
     "cooking_step": screen_cooking_step,
+    "cooking_complete": screen_cooking_complete,
     "no_match": screen_no_match,
     "unclassified": screen_unclassified,
     "register_intro": screen_register_intro,

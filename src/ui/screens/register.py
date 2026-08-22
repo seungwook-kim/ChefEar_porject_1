@@ -41,6 +41,12 @@ def screen_no_match() -> None:
         "<p>요리명과 재료 내용, 두 가지 기준으로 모두 찾아봤지만 없어서 정직하게 말씀드려요.</p></div>",
         unsafe_allow_html=True,
     )
+    chat_log = st.session_state.chat_log
+    if chat_log and chat_log[-1][0] == "ai":
+        # dispatch.py가 이 화면으로 넘어오기 직전 speak(..., hidden=True)로 미리 합성/캐싱만
+        # 해둔 문구를 여기서 다시 찾아 들려준다(2026-08-22 리포트 — 화면 전환 중 재생바가
+        # "떴다 사라짐" 깜빡이는 문제, recipe_confirm과 같은 패턴).
+        _render_cached_speech(chat_log[-1][1])
     render_chat(st.session_state.chat_log[-2:])
     st.caption("실데이터 검색만으로 판단해요 — 없는 레시피를 지어내지 않아요 (1.5 원칙).")
     render_spacer()
@@ -64,6 +70,11 @@ def screen_unclassified() -> None:
         "<p>죄송해요, 다시 한번 말씀해주시겠어요? 안 될 때는 아래 버튼으로도 진행할 수 있어요.</p></div>",
         unsafe_allow_html=True,
     )
+    chat_log = st.session_state.chat_log
+    if chat_log and chat_log[-1][0] == "ai":
+        # screen_no_match()와 같은 이유(2026-08-22) — dispatch.py의 hidden=True speak()가
+        # 미리 캐싱해둔 문구를 여기서 다시 들려준다.
+        _render_cached_speech(chat_log[-1][1])
     render_spacer()
     render_mic_bar("다시 말씀해주세요", "또는 아래 버튼을 눌러주세요", listening=False)
 
