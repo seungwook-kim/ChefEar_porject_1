@@ -1,0 +1,13 @@
+# Streamlit의 기본 위젯(st.button 등)은 방문자 OS/브라우저의 다크모드 설정을 그대로
+# 따라간다 — ui/theme.py의 CSS(:root)는 항상 라이트 모드 색상(#f7f1e6 배경, #241c15
+# 텍스트 등)만 정의해뒀는데, 정작 로그인 버튼처럼 커스텀 CSS가 안 닿는 순수 Streamlit
+# 위젯은 다크모드 방문자에게 어두운 배경 위에 밝은 글씨로 렌더링돼서 앱 디자인과
+# 어긋나거나(예: 다크 배경 위 다크 텍스트로 안 보임) 글씨가 흰색으로 보이는 문제가
+# 있었다(2026-08-22 리포트). base="light"로 강제해서 방문자 시스템 설정과 무관하게
+# 항상 ui/theme.py와 같은 라이트 톤으로 렌더링되게 한다.
+[theme]
+base = "light"
+primaryColor = "#ee7b36"
+backgroundColor = "#f7f1e6"
+secondaryBackgroundColor = "#fbf6ec"
+textColor = "#241c15"

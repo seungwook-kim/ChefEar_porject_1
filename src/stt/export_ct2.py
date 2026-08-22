@@ -24,11 +24,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-# 병합(merge_and_unload)은 GPU가 필요 없는 순수 가중치 연산이다. 이 환경은 GPU가 남아있어서
-# peft의 어댑터 로딩이 CUDA를 잡으려다 충돌한 적이 있어(2026-08-19,
-# "CUDA-capable device(s) is/are busy or unavailable") 아예 GPU를 안 보이게 하고 CPU로 강제한다.
-os.environ["CUDA_VISIBLE_DEVICES"] = ""
-
 import torch
 from peft import PeftModel
 from transformers import WhisperForConditionalGeneration, WhisperProcessor
@@ -39,6 +34,17 @@ from orchestration.db import load_env
 
 load_env()
 
+# 2026-08-22 팀 결정(docs/decisions.md #2, 배포가 GPU 데스크탑 상시 노출로 확정됨)으로
+# CPU 강제(os.environ["CUDA_VISIBLE_DEVICES"] = "")를 없애고 GPU를 쓰도록 바꿨다. 예전엔
+# peft의 어댑터 로딩이 CUDA를 잡으려다 충돌한 적이 있어서(2026-08-19, "CUDA-capable
+# device(s) is/are busy or unavailable") GPU를 아예 숨겼는데, 이 크래시는 GPU가 이미
+# 다른 프로세스에 점유돼 있을 때 재현될 수 있다 — 이 스크립트를 돌리기 전에 GPU 데스크탑에
+# 다른 무거운 GPU 작업(예: src/app.py 실행 중)이 없는지 먼저 확인할 것.
+if not torch.cuda.is_available():
+    raise RuntimeError(
+        "GPU(CUDA)가 필요합니다 — 배포 방향이 GPU 전용으로 확정됨(docs/decisions.md #2)."
+    )
+
 BASE_MODEL_ID = "openai/whisper-large-v3-turbo"
 ADAPTER_ID = os.environ.get("HF_STT_MODEL_REPO") or "leeony/chefear-stt-large-v3-turbo"
 
@@ -47,9 +53,9 @@ CT2_DIR = PROJECT_ROOT / "models" / "stt_finetuned" / "ct2_int8"
 
 
 def main() -> None:
-    print(f"[1/3] base 모델 로드: {BASE_MODEL_ID} (fp16 — merge_and_unload()는 4bit 양자화 상태로는 안 됨)")
+    print(f"[1/3] base 모델 로드: {BASE_MODEL_ID} (fp16, GPU — merge_and_unload()는 4bit 양자화 상태로는 안 됨)")
     base_model = WhisperForConditionalGeneration.from_pretrained(
-        BASE_MODEL_ID, torch_dtype=torch.float16
+        BASE_MODEL_ID, torch_dtype=torch.float16, device_map="cuda:0"
     )
     processor = WhisperProcessor.from_pretrained(ADAPTER_ID)
 
@@ -57,6 +63,12 @@ def main() -> None:
     merged = PeftModel.from_pretrained(base_model, ADAPTER_ID).merge_and_unload()
     merged.config.forced_decoder_ids = None
     merged.generation_config.forced_decoder_ids = None
+
+    # save_pretrained()는 GPU 텐서를 그대로 저장하지 않는다(state_dict를 CPU로 옮겨서 저장) —
+    # 다만 병합된 모델 자체는 여전히 GPU에 있으므로 다음 실행을 위해 명시적으로 CPU로 옮겨
+    # GPU 메모리를 비워둔다(같은 프로세스에서 이후 단계가 GPU를 더 안 쓰긴 하지만, 다른
+    # 사용자가 같은 GPU 데스크탑을 공유하는 환경이라 불필요하게 오래 잡고 있지 않는다).
+    merged = merged.to("cpu")
 
     MERGED_DIR.mkdir(parents=True, exist_ok=True)
     merged.save_pretrained(MERGED_DIR)

@@ -5,6 +5,7 @@ Streamlit 기본 컴포넌트로 표현하기 어려운 조각만 st.markdown(un
 그린다. docs/ChefEar_PRD_SDD_v0.8.md 3.3의 화면 구성(①~⑥)을 그대로 따른다.
 """
 import base64
+import json
 from pathlib import Path
 from string import Template
 
@@ -182,6 +183,14 @@ div:has(> button[aria-label="Show password"]), div:has(> button[aria-label="Hide
 .ce-recipe-name { display:flex; align-items:center; gap:8px; font-size:15px; font-weight:700; color: var(--text); }
 .ce-recipe-name .icon { color: var(--accent); display:inline-flex; }
 
+/* 마이 레시피 목록 전체를 감싸는 컨테이너 - 레시피 개수가 많아지면 화면 밖으로 한없이
+   길어지던 걸, 일정 높이(60vh)가 넘으면 그 안에서만 스크롤되게 한다(2026-08-22 요청).
+   overflow가 오른쪽 카드 그림자(box-shadow)를 잘라먹지 않도록 카드 padding만큼
+   여유(4px)를 좌우에 더 준다. */
+[data-testid="stVerticalBlock"][class*="st-key-my_recipes_list"] {
+  max-height: 60vh; overflow-y: auto; padding: 4px; margin: -4px;
+}
+
 /* 마이 레시피 카드의 수정/삭제 버튼 두 개 - st.columns로 나누면 감싸는 칸이 넓어질
    때마다 두 버튼도 같이 벌어져서(각자 칸의 절반씩 차지) 화면이 넓을수록 간격이
    커지는 문제가 있었다(2026-08-21, 실측). 대신 세로 블록 하나(stVerticalBlock)에
@@ -200,20 +209,33 @@ div:has(> button[aria-label="Show password"]), div:has(> button[aria-label="Hide
   display: flex; align-items: flex-end; justify-content: flex-end;
 }
 
-/* 레시피 등록 · 조리 순서 화면(register_steps)에서 입력한 순서 목록 - 기존엔
-   "**1.** 문장"처럼 굵은 숫자 + 평문이라 밋밋했다(2026-08-21 지적). 재료 화면의
-   칩(.ce-chip)과 짝을 맞춰 순서도 카드형 줄로 - 원형 번호 배지 + 문장, 마이 레시피
-   카드(.ce-recipe-name)와 같은 둥근 배지 언어를 재사용한다. */
-.ce-step-list { display:flex; flex-direction:column; gap:8px; }
-.ce-step-row {
-  display:flex; align-items:flex-start; gap:12px; background: var(--surface);
-  border-radius:16px; padding:14px 16px; box-shadow: 0 4px 12px rgba(36,28,21,0.05);
-}
+/* 레시피 등록 · 조리 순서 화면(register_steps)의 순서 번호 배지 - 원형 배지 + 문장,
+   마이 레시피 카드(.ce-recipe-name)와 같은 둥근 배지 언어를 재사용한다(2026-08-21).
+   줄 전체 박스는 이제 st-key-reg_step_row_(위 참고)가 담당한다(2026-08-22, 수정/삭제
+   버튼을 넣으려고 순수 HTML 대신 진짜 컨테이너로 바꾸면서 .ce-step-list/.ce-step-row는
+   더 안 쓰게 됨). */
 .ce-step-num {
   width:26px; height:26px; min-width:26px; border-radius:50%; background: var(--accent);
   color:#fff; display:grid; place-items:center; font-weight:800; font-size:13px; margin-top:1px;
 }
-.ce-step-row p { margin:0; font-size:14.5px; line-height:1.55; color: var(--text); }
+
+/* register_steps 화면의 순서 한 줄(2026-08-22 요청, 수정/삭제 버튼 추가) - 안에 실제
+   st.button이 들어가서 순수 HTML .ce-step-row로 못 감싸므로(cs_step_card/my_recipe_card_와
+   같은 이유) 진짜 컨테이너를 카드로 쓴다. 줄마다 키가 다르니(st-key-reg_step_row_<i>)
+   부분일치 선택자로 짚는다. */
+[data-testid="stVerticalBlock"][class*="st-key-reg_step_row_"] {
+  background: var(--surface); border-radius: 16px; padding: 10px 16px;
+  box-shadow: 0 4px 12px rgba(36,28,21,0.05); gap: 4px;
+}
+/* 수정/삭제 버튼 두 개 - my_recipe_actions_와 같은 이유(2026-08-21, 칸이 넓어질수록
+   버튼이 벌어지는 문제)로 세로 블록 하나에 담고 가로 배치 + 오른쪽 붙임으로 강제한다. */
+[data-testid="stVerticalBlock"][class*="st-key-reg_step_actions_"] {
+  flex-direction: row; flex-wrap: nowrap; gap: 6px; justify-content: flex-end;
+  flex-shrink: 0; width: auto;
+}
+[data-testid="stVerticalBlock"][class*="st-key-reg_step_actions_"] [data-testid="stElementContainer"] {
+  width: auto;
+}
 
 .ce-dots { display:flex; justify-content:center; gap:9px; }
 .ce-dots .d { width:9px; height:9px; border-radius:50%; background: var(--border); }
@@ -248,13 +270,37 @@ div:has(> button[aria-label="Show password"]), div:has(> button[aria-label="Hide
   background: var(--accent); transform: translate(-50%, -50%) scale(1.25);
 }
 
-.ce-step-title { font-size:22px; font-weight:800; text-align:center; line-height:1.45; margin: 32px 0 14px !important; }
+/* 2026-08-22 리포트 — 위아래 margin이 32px/14px로 비대칭이었어서, vertical_alignment=
+   "center"가 화살표 칸과 텍스트 칸을 각자의 박스(margin 포함) 높이 기준으로 정렬하다 보니
+   텍스트가 화살표보다 아래로 처져 보였다(짧은 한 줄 문장일수록 그 9px 안팎의 어긋남이
+   전체 높이에서 차지하는 비중이 커서 더 두드러짐). margin을 0으로 맞춰서 텍스트 박스
+   높이 = 실제 글자 높이가 되게 하고, 점(dots)과의 간격은 아래 stHorizontalBlock의
+   margin-top으로 화살표·텍스트 칸 셋을 한 덩어리로 같이 밀어서 만든다. */
+.ce-step-title { font-size:22px; font-weight:800; text-align:center; line-height:1.45; margin: 0 !important; }
 /* 조리순서 단계 텍스트 양옆의 이전/다음 화살표(2026-08-21 요청) - 화살표는 각자 칸
    가장자리에 붙어있고 가운데 텍스트 칸만 늘어나면 되므로(2개 아이콘이 서로 벌어지는
    my_recipe_actions_ 문제와 달리 여기선 오히려 벌어지는 게 의도된 배치), st.columns를
    그대로 써도 된다. */
+[class*="st-key-cs_step_card"] div[data-testid="stHorizontalBlock"] { margin-top: 18px; }
 [class*="st-key-cs_prev_arrow"] button, [class*="st-key-cs_next_arrow"] button {
   background: var(--surface-alt); border: 1px solid var(--border); color: var(--accent);
+  /* use_container_width=True가 버튼을 칸 전체 너비로 늘리는데, 아이콘 하나만 들어있어서
+     칸을 좁게 잡아도(st.columns([1,7,1])) 버튼이 뚱뚱해 보인다는 지적(2026-08-22)으로
+     버튼 자체 너비를 강제로 좁혀 칸 안에서 가운데 정렬한다. */
+  width: 36px !important; min-width: 36px !important; margin: 0 auto;
+}
+/* 2026-08-22: st.columns([1,10,1])로 비율을 줘도 화면엔 반영 안 됐는데, 원인은 위(298줄
+   근처) "컬럼이 항상 가로로 나란히 있도록" 규칙의 `div[data-testid="stColumn"] { flex: 1 1
+   0 !important; }` — 이게 이 앱의 모든 st.columns()를 강제로 똑같은 너비(1:1:1)로 만들어서
+   Python 쪽 비율 인자를 완전히 무시하고 있었다. cs_step_card 안의 컬럼(화살표-텍스트-화살표)
+   에만 더 구체적인 선택자로 그 규칙을 다시 덮어써서, 화살표 칸은 좁게 고정하고 텍스트
+   칸이 남는 공간을 전부 차지하게 한다. */
+[class*="st-key-cs_step_card"] div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:nth-of-type(1),
+[class*="st-key-cs_step_card"] div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:nth-of-type(3) {
+  flex: 0 0 44px !important; width: 44px !important;
+}
+[class*="st-key-cs_step_card"] div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:nth-of-type(2) {
+  flex: 1 1 auto !important; width: auto !important;
 }
 
 .ce-chip-grid { display:flex; flex-wrap:wrap; column-gap:9px; row-gap:16px; }
@@ -317,8 +363,8 @@ div.stButton > button[kind="primary"]:hover { background: var(--accent-dark); bo
   width:38px; height:38px; min-width:38px; border-radius:50%;
   background: var(--accent-soft); color: var(--accent); display:grid; place-items:center;
 }
-.ce-wave { flex:1; display:flex; align-items:center; gap:3px; height:26px; overflow:hidden; }
-.ce-wave span { flex:1 1 0; min-width:0; border-radius:2px; background: var(--accent); opacity:.85; }
+.ce-wave { flex:1; display:flex; align-items:center; gap:1.5px; height:26px; overflow:hidden; }
+.ce-wave span { flex:1 1 0; min-width:0; border-radius:1px; background: var(--accent); opacity:.85; }
 
 .ce-mic-bar {
   display:flex; align-items:center; gap:14px; background: var(--surface);
@@ -584,12 +630,18 @@ def render_loading_screen(message: str = "불러오는 중...") -> None:
     render_spacer()
 
 
-def render_brand(show_login: bool = False) -> bool:
+def render_brand(show_login: bool = False, username: str | None = None) -> bool:
     """show_login=True면 "ChefEar" 제목과 같은 줄 오른쪽에 로그인 아이콘 버튼을 나란히
     놓는다(2026-08-21, start 화면 요청 - 원래는 화면 쪽에서 별도 줄로 그렸었는데 제목과
     안 나란해서 여기로 옮김). 로그인 내비게이션(goto)은 이 파일이 모르는 app.py 쪽
     개념이라, 여기서는 버튼이 눌렸는지 bool만 돌려주고 실제 화면 전환은 호출부가 한다
-    (render_back_link()와 같은 패턴)."""
+    (render_back_link()와 같은 패턴).
+
+    username이 주어지면(로그인 상태) 로그인 아이콘 대신 그 아이디를 보여준다
+    (2026-08-22 요청) - 눌렀을 때 어디로 갈지(마이 레시피)도 이 파일이 모르는
+    app.py 쪽 개념이라, 여기서도 클릭 여부만 bool로 돌려준다. 로그아웃은 여기서
+    바로 하지 않고 그 마이 레시피 화면의 로그아웃 버튼에 맡긴다.
+    """
     if not show_login:
         st.markdown(f'<div class="ce-brand"><span class="icon">{ICON_POT}</span> ChefEar</div>', unsafe_allow_html=True)
         return False
@@ -601,6 +653,8 @@ def render_brand(show_login: bool = False) -> bool:
         # 2026-08-21) - my_recipe_actions_와 같은 방식으로 감싸는 세로 블록에
         # justify-content:flex-end를 줘서 칸 안에서 오른쪽 끝으로 민다.
         with st.container(key="brand_login_wrap"):
+            if username:
+                return st.button(f":material/person: {username}", key="brand_login_btn", help="마이 레시피")
             return st.button(":material/login:", key="brand_login_btn", help="로그인")
 
 
@@ -617,6 +671,75 @@ def render_section_title(text: str) -> None:
 
 def render_badge(text: str) -> None:
     st.markdown(f'<span class="ce-badge">{text}</span>', unsafe_allow_html=True)
+
+
+def render_typewriter_message(lines: list[str], *, key: str, speed_ms: int = 28) -> None:
+    """AI 메시지를 아바타 아이콘·이름표·말풍선 카드 없이(2026-08-22 요청 — "챗봇 느낌
+    안 나게, 글씨만 보이게") 여러 줄로 줄바꿈해서, 한 글자씩 순서대로 타자기처럼
+    나타나게 그린다(recipe_confirm의 "이걸로 시작할까요?" 확인 질문용, 2026-08-22
+    재요청 — 요리명/문장을 줄바꿈하고 요리명만 크게 강조).
+
+    lines: 화면에 줄 단위로 보여줄 목록(예: ["된장찌개", "조회수 1위 표준 레시피예요.",
+    "이걸로 시작할까요?"]). 첫 줄(보통 요리명)은 크고 굵게, 나머지는 보통 크기로
+    그린다. 애니메이션은 줄 순서대로 한 줄씩 다 친 뒤 다음 줄로 넘어간다.
+
+    st.markdown()에 <script>를 넣어도 브라우저가 innerHTML로 삽입된 스크립트는 실행하지
+    않는다(render_audio_player()가 st.iframe()을 쓰는 것과 같은 이유) — 그래서 여기도
+    st.iframe()으로 그려서 JS가 실제로 동작하게 한다.
+
+    key로 세션 안에서 이미 재생한 메시지인지 추적한다 — 같은 화면이 다른 이유로(마이크
+    입력 대기 등) 다시 그려질 때마다 애니메이션이 처음부터 또 재생되면 거슬리므로,
+    한 번 재생된 key는 이후 정적 텍스트로 바로 보여준다.
+    """
+    played = st.session_state.setdefault("_typewriter_played", set())
+
+    style = """
+    <style>
+      body { margin:0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; text-align:center; }
+      p { margin:0 0 4px; line-height:1.4; text-align:center; }
+      p:last-child { margin-bottom:0; }
+      .head { font-size:26px; font-weight:800; color:#ee7b36; }
+      .rest { font-size:15px; font-weight:600; color:#241c15; }
+    </style>
+    """
+
+    def _cls(idx: int) -> str:
+        return "head" if idx == 0 else "rest"
+
+    if key in played:
+        rows = "".join(f'<p><span class="{_cls(i)}">{line}</span></p>' for i, line in enumerate(lines))
+        st.iframe(f"{style}{rows}", height="content")
+        return
+
+    played.add(key)
+    placeholders = "".join(
+        f'<p><span class="{_cls(i)}" id="tw-{i}"></span></p>' for i in range(len(lines))
+    )
+    html = f"""
+    {style}
+    {placeholders}
+    <script>
+      const linesText = {json.dumps(lines)};
+      let lineIdx = 0;
+      let charIdx = 0;
+      function tick() {{
+        if (lineIdx >= linesText.length) return;
+        const el = document.getElementById("tw-" + lineIdx);
+        const text = linesText[lineIdx];
+        if (charIdx <= text.length) {{
+          el.textContent = text.slice(0, charIdx);
+          charIdx += 1;
+          setTimeout(tick, {speed_ms});
+        }} else {{
+          lineIdx += 1;
+          charIdx = 0;
+          setTimeout(tick, {speed_ms});
+        }}
+      }}
+      tick();
+    </script>
+    """
+    st.iframe(html, height="content")
 
 
 def render_chat(rows: list[tuple[str, str]]) -> None:
@@ -697,8 +820,8 @@ _AUDIO_PLAYER_TEMPLATE = Template("""
       font-family: "Pretendard", -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
   .player { display:flex; align-items:center; gap:14px; background:#fbf6ec;
     border-radius:999px; padding:10px 16px; }
-  .wave { flex:1; display:flex; align-items:center; gap:3px; height:26px; overflow:hidden; }
-  .wave span { flex:1 1 0; min-width:0; border-radius:2px; background:#ee7b36; opacity:.4;
+  .wave { flex:1; display:flex; align-items:center; gap:1.5px; height:26px; overflow:hidden; }
+  .wave span { flex:1 1 0; min-width:0; border-radius:1px; background:#ee7b36; opacity:.4;
     align-self:center; transition: opacity .1s linear; }
   .wave span.played { opacity:1; }
 </style>
@@ -733,12 +856,17 @@ _AUDIO_PLAYER_TEMPLATE = Template("""
 """)
 
 
-def _compute_wave_bars(audio_path: str | Path, num_bars: int = 20, min_h: int = 4, max_h: int = 28) -> list[int]:
+def _compute_wave_bars(audio_path: str | Path, num_bars: int = 60, min_h: int = 4, max_h: int = 28) -> list[int]:
     """실제 wav 파형을 num_bars개 구간으로 나눠 구간별 RMS 진폭을 막대 높이(px)로 바꾼다.
 
     기존 _WAVE_HEIGHTS는 모든 문장에 똑같이 재사용되는 가짜(장식용) 값이었다 — 이 함수는
     합성된 wav를 실제로 읽어서, 조용한 구간은 낮게 시끄러운(강세가 있는) 구간은 높게
     나오도록 진짜 파형 모양을 만든다(2026-08-19, 사용자 요청).
+
+    num_bars: 막대 폭은 CSS(_AUDIO_PLAYER_TEMPLATE의 .wave span, flex:1 1 0)가 재생바
+    전체 너비를 이 개수만큼 나눠 정하므로, 개수를 늘리면 그만큼 막대 하나하나가 가늘어진다
+    (2026-08-22 요청 — 막대가 두꺼운 블록처럼 보이지 말고 더 촘촘한 파형처럼 보이게, 20 ->
+    60으로 늘림).
     """
     data, _ = sf.read(str(audio_path), dtype="float32", always_2d=False)
     if data.ndim > 1:
@@ -837,9 +965,8 @@ def render_step_card(
     순서대로 넣으면 진짜로 같은 흰 박스 안에 nesting된다(2026-08-19, 재생바를 카드
     안에 넣어달라는 요청으로 구조 변경).
 
-    audio_path가 주어지면 그 wav로 render_audio_player()를 카드 안에 넣는다(진짜
-    재생 가능). None이고 show_player=True면 장식용 정지 파형만 보여준다(다른
-    레시피처럼 오디오가 없는 경우).
+    audio_path가 주어지면 그 wav를 render_audio_player()로 카드 안에서 자동재생하고
+    재생바(파형)도 그대로 보여준다(2026-08-22). audio_path가 None이면 아무것도 안 그린다.
 
     2026-08-21: 점을 눌러 그 단계로 바로 이동하고, 단계 텍스트 양옆 화살표로
     이전/다음 단계로 넘어갈 수 있게 해달라는 요청 - 이 함수는 순수 표시만 담당하고
@@ -852,11 +979,14 @@ def render_step_card(
     with st.container(key="cs_step_card"):
         nav_target = render_interactive_dots(total, current_step)
 
-        # 2026-08-21: 단계 텍스트가 여러 줄로 줄바꿈되면(예: 3줄) 화살표가 기본
-        # top-정렬이라 텍스트 첫 줄에만 나란해 보이고 전체 블록 중앙과는 안 맞았다
-        # (스크린샷 지적) - vertical_alignment="center"로 텍스트 블록 높이와 무관하게
-        # 화살표가 항상 텍스트 세로 중앙에 오게 한다.
-        arrow_l, mid, arrow_r = st.columns([1, 7, 1], vertical_alignment="center")
+        # vertical_alignment="center": 단계 텍스트가 여러 줄로 길어져도 화살표가 위쪽에
+        # 붙지 않고 텍스트 블록 세로 중앙에 맞춰져서, 화살표와 텍스트가 시각적으로
+        # "같은 줄"에 있는 것처럼 보이게 한다(2026-08-22 요청, 기본값 "top"이라 긴 텍스트일
+        # 때 화살표가 첫 줄에만 붙어 보였음).
+        # 화살표 버튼 자체는 CSS(cs_prev_arrow/cs_next_arrow, 36px 고정)로 이미 좁혀놔서
+        # 칸을 예전만큼 넓게(1) 안 잡아도 된다 — 화살표 칸을 줄이고 그만큼 가운데 텍스트
+        # 칸을 넓힌다(2026-08-22 요청).
+        arrow_l, mid, arrow_r = st.columns([1, 10, 1], vertical_alignment="center")
         with arrow_l:
             if st.button(
                 ":material/chevron_left:", key="cs_prev_arrow", help="이전 단계",
@@ -866,16 +996,23 @@ def render_step_card(
         with mid:
             st.markdown(f'<p class="ce-step-title">{step_text}</p>', unsafe_allow_html=True)
         with arrow_r:
+            # 2026-08-22 요청: 마지막 단계에서도 화살표를 막아두지 않는다 — 이 화살표가
+            # "완료"로 넘어가는 유일한 화면 접점이 되도록, current_step==total일 때도
+            # 눌리게 두고 nav_target을 total+1(범위 밖)로 돌려준다. 호출부
+            # (screen_cooking_step())가 그 값을 "요리 완성" 신호로 해석해서 완료 화면으로
+            # 보낸다 — 이 함수 자체는 orchestration을 몰라서 여기서 직접 화면 전환은 안 한다.
             if st.button(
                 ":material/chevron_right:", key="cs_next_arrow", help="다음 단계",
-                disabled=current_step >= total, use_container_width=True,
+                use_container_width=True,
             ):
                 nav_target = current_step + 1
 
+        # 2026-08-22 재요청: 단계 텍스트 밑에 재생바(파형)가 보여야 한다는 요청으로
+        # render_audio_player()를 다시 쓴다(같은 날 있었던 "재생 버튼 없애기" 요청은
+        # 화면 전환 중 반짝이는 별개의 speak() 호출들에만 적용 — voice_io.speak()의
+        # hidden=True 파라미터 참고, 이 카드 자체의 상시 표시 재생바와는 다른 문제).
         if audio_path is not None:
             render_audio_player(audio_path, nonce=audio_nonce)
-        elif show_player:
-            st.markdown(_player_html(), unsafe_allow_html=True)
     return nav_target
 
 

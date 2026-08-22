@@ -68,10 +68,13 @@ def load_llm():
 
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    if torch.cuda.is_available():
-        device_map, dtype = "cuda:0", torch.bfloat16
-    else:
-        device_map, dtype = "cpu", torch.float32
+    # 2026-08-19 팀 결정(docs/decisions.md #2, TTS 배포 결정을 서비스 전체에 동일 적용): 배포를
+    # GPU 데스크탑 상시 노출로 확정해서 CPU 폴백을 없애고 GPU를 필수로 요구한다.
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "GPU(CUDA)가 필요합니다 — 배포 방향이 GPU 전용으로 확정됨(docs/decisions.md #2)."
+        )
+    device_map, dtype = "cuda:0", torch.bfloat16
 
     _tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, revision=MODEL_REVISION, trust_remote_code=True)
     _model = AutoModelForCausalLM.from_pretrained(
