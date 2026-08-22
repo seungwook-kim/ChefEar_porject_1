@@ -166,8 +166,8 @@ st.markdown(
   <p class="tagline">화면 대신, 목소리로 완성하는 요리</p>
   <p class="desc">
     요리 경험이 거의 없는 사용자가 칼질·반죽 등으로 손을 쓰기 어려운 상황에서도,
-    화면을 보지 않고 음성만으로 레시피를 한 단계씩 진행하고 재료 대체까지
-    그 자리에서 반영받는 음성 레시피 에이전트입니다.
+    화면을 보지 않고 음성만으로 레시피를 한 단계씩 진행할 수 있는
+    음성 레시피 에이전트입니다.
   </p>
   <div class="badge-row">
     <span class="badge">🎙️ Whisper STT 파인튜닝</span>
@@ -210,8 +210,6 @@ st.markdown(
     <div class="bubble ai"><div class="msg">된장찌개, 조회수 1위 표준 레시피예요. 이걸로 시작할까요?</div></div>
     <div class="bubble user"><div class="msg">응</div></div>
     <div class="bubble ai"><div class="msg">1단계, 물을 넣고 끓여주세요.</div></div>
-    <div class="bubble user"><div class="msg">애호박 없는데 바지락 넣어도 돼?</div></div>
-    <div class="bubble ai"><div class="msg">네, 바지락 된장찌개로 바꿔드렸어요. 계속 진행할게요.</div></div>
     <div class="bubble user"><div class="msg">다시 알려줘</div></div>
     <div class="bubble ai"><div class="msg">현재 단계를 다시 읽어드릴게요.</div></div>
   </div>
@@ -229,12 +227,12 @@ st.markdown(
     <span class="step">🎙️ 사용자 음성</span><span class="arrow">→</span>
     <span class="step">Whisper STT</span><span class="arrow">→</span>
     <span class="step">의도 분류</span><span class="arrow">→</span>
-    <span class="step">레시피 검색·진행·재료대체</span><span class="arrow">→</span>
+    <span class="step">레시피 검색·진행</span><span class="arrow">→</span>
     <span class="step">Qwen3-TTS</span><span class="arrow">→</span>
     <span class="step">🔊 음성 안내</span>
   </div>
   <div class="principle" style="margin-top:26px;">
-    ✅ 의도분류는 문장 임베딩 유사도 매칭으로, 재료 대체·조리순서는 실데이터 검색으로만 처리해요.
+    ✅ 의도분류는 문장 임베딩 유사도 매칭으로, 조리순서는 실데이터 검색으로만 처리해요.
     서비스가 실행되는 동안에는 외부 LLM API를 호출하지 않습니다.
   </div>
 </div>
@@ -252,7 +250,6 @@ st.markdown(
     <div class="card"><span class="icon">🗣️</span><h4>음성 레시피 조회</h4><p>자유발화를 STT로 바꾸고 의도를 분석해 원하는 요리를 바로 찾아요.</p></div>
     <div class="card"><span class="icon">📶</span><h4>단계별 조리 안내</h4><p>전체 레시피를 한 번에 읽지 않고, 한 단계씩 필요한 만큼만 안내해요.</p></div>
     <div class="card"><span class="icon">🔁</span><h4>진행 / 재청취</h4><p>"다음", "다시", "한 번 더" 등 다양한 표현을 인식해요.</p></div>
-    <div class="card"><span class="icon">🔄</span><h4>재료 대체</h4><p>조리 중 다른 재료를 쓰고 싶을 때, 실제 레시피 데이터에서 대체 가능한 레시피를 찾아줘요.</p></div>
     <div class="card"><span class="icon">💾</span><h4>사용자 레시피 저장</h4><p>변경한 레시피를 나만의 버전으로 별도 저장해요.</p></div>
     <div class="card"><span class="icon">🖥️</span><h4>화면 보조 UI</h4><p>현재 단계, 재료, 최근 대화를 화면으로도 함께 보여줘요.</p></div>
   </div>
@@ -270,8 +267,7 @@ st.markdown(
   <div style="max-width:640px; margin:0 auto;">
     <div class="diff-row"><span class="old">정해진 레시피를 그대로 읽어줌</span><span class="new">사용자 진행 속도에 맞춰 단계별 안내</span></div>
     <div class="diff-row"><span class="old">주방 소음에 음성 인식 성능 저하</span><span class="new">요리 용어·잡음 환경 반영한 STT 파인튜닝</span></div>
-    <div class="diff-row"><span class="old">재료 없을 때 대응 제한적</span><span class="new">실제 레시피 DB 기반 재료 대체 검색</span></div>
-    <div class="diff-row"><span class="old">개인 변경사항 유지 어려움</span><span class="new">변경된 레시피를 개인 버전으로 저장</span></div>
+    <div class="diff-row"><span class="old">레시피가 없을 때 대응 어려움</span><span class="new">나만의 레시피로 저장</span></div>
     <div class="diff-row"><span class="old">음성만으로 이전 내용 확인 어려움</span><span class="new">음성 중심 + 화면 보조 방식</span></div>
   </div>
 </div>
@@ -289,7 +285,6 @@ st.markdown(
     <div class="stat"><div class="num">60,282</div><div class="label">고유 요리명</div></div>
     <div class="stat"><div class="num">234,538</div><div class="label">고유 레시피</div></div>
     <div class="stat"><div class="num">0.0000</div><div class="label">TTS→STT 재인식 CER</div></div>
-    <div class="stat"><div class="num">90%+</div><div class="label">목표 재료 대체 완료율</div></div>
   </div>
   <div class="section-sub" style="margin-top:24px; margin-bottom:0;">
     STT는 <code>openai/whisper-large-v3-turbo</code>를 요리 도메인(재료명·계량단위·진행표현)으로
@@ -312,7 +307,7 @@ st.markdown(
       <div class="avatar">👨‍🍳</div>
       <h4>김승욱 · 조장</h4>
       <div class="role">오케스트레이션 · 통합</div>
-      <div class="task">의도분류, 단계 진행·재료대체 로직, Supabase 검색, HF Spaces 배포 및 통합테스트</div>
+      <div class="task">의도분류, 단계 진행 로직, Supabase 검색, HF Spaces 배포 및 통합테스트</div>
     </div>
     <div class="team-card">
       <div class="avatar">🔊</div>
