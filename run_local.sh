@@ -14,8 +14,8 @@
 # 요구한다면 이 문제가 재현될 수 있다 — 실행해서 직접 확인 필요.
 #
 # 사용법:
-#   ./run_local.sh                     # 기본값: tests/test_ui.py 실행
-#   ./run_local.sh src/app.py          # 실제 서비스 앱 실행
+#   ./run_local.sh                     # 기본값: src/app.py 실행
+#   ./run_local.sh tests/test_ui.py    # STT→LLM→DB 수동 테스트 화면
 #
 # 새 계정에서 처음 돌리는데 아래 후보 중 아무것도 없다고 나오면, streamlit/faster-whisper/
 # torch가 깔린 venv를 하나 만들고 이 배열에 경로를 추가할 것.
@@ -49,7 +49,7 @@ NVIDIA_LIB="$(echo "$VENV"/lib/python3.*/site-packages/nvidia)"
 
 export LD_LIBRARY_PATH="$NVIDIA_LIB/cu13/lib:$NVIDIA_LIB/cudnn/lib:${LD_LIBRARY_PATH:-}"
 
-TARGET="${1:-tests/test_ui.py}"
+TARGET="${1:-src/app.py}"
 
 echo "venv: $VENV" >&2
 

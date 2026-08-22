@@ -18,6 +18,7 @@ from __future__ import annotations
 import io
 import os
 import sys
+import threading
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -54,6 +55,7 @@ from theme import (
     render_mic_bar,
     render_spacer,
     render_step_card,
+    render_typewriter_message,
 )
 
 load_env()
@@ -75,6 +77,15 @@ TEST_LOGIN_PASSWORD = os.environ.get("TEST_LOGIN_PASSWORD")
 # 조리 단계 음성 캐시를 두 앱이 같이 쓸 수 있게 한다(2026-08-20 실측: 문장당 최대
 # 4분 걸리는 로컬 CPU 합성을 두 번 반복하지 않아도 됨).
 _AUDIO_DIR = PROJECT_ROOT / "ui" / "assets" / "audio"
+
+# 2026-08-22: TTS 합성 자체는 GPU에서도 문장 길이에 따라 3~9초 걸리는 게 실측으로 확인됐고
+# (docs/decisions.md #2), torch.compile 등으로 더 줄이려는 시도는 재컴파일 스톨 위험이 더
+# 커서 보류했다(합성 속도 자체는 그대로 두기로 함) — 대신 다음 조리 단계 음성을 사용자가
+# 지금 단계를 듣고 있는 동안 백그라운드에서 미리 합성해둬서, 실제 "다음" 발화 시점엔
+# 이미 캐싱돼 있게 만든다(prefetch_next_step_audio() 참고). 이 락은 백그라운드 프리페치와
+# speak()의 실시간 합성이 동시에 같은 GPU 모델 인스턴스를 호출하는 걸 막는다 — qwen_tts
+# 모델이 동시 호출에 안전한지 보장이 없어서, 항상 한 번에 하나씩만 GPU에 올리게 직렬화한다.
+_TTS_LOCK = threading.Lock()
 
 # ============================================================
 # 세션 상태
@@ -170,7 +181,13 @@ def _render_cached_speech(message: str) -> None:
         render_audio_autoplay(path)
 
 
-def speak(message: str, *, recipe_id: str | None = None, step_number: int | None = None) -> None:
+def speak(
+    message: str,
+    *,
+    recipe_id: str | None = None,
+    step_number: int | None = None,
+    hidden: bool = False,
+) -> None:
     """TTS로 응답을 재생하고 채팅 로그에 남긴다. 합성 실패는 조용히 삼키지 않는다(EC-05) —
     화면 텍스트는 항상 남고, 음성만 실패했다는 걸 사용자에게 알린다.
 
@@ -185,6 +202,14 @@ def speak(message: str, *, recipe_id: str | None = None, step_number: int | None
     1회성 문구)는 문구 자체의 해시를 캐시 키로 써서, 자주 반복되는 고정 문구
     ("1단계예요, 이전 단계가 없어요." 등)도 같이 재사용된다. 둘 다 로컬 CPU 기준
     문장당 최대 몇 분 걸리는 재합성을 피하기 위함이다(2026-08-20 실측).
+
+    hidden=True: register_steps의 "네, 저장할게요"처럼 speak() 직후 바로 goto()로
+    다른 화면으로 넘어가는 호출부에서 쓴다. render_audio_player()(재생바)로 그려도
+    goto()의 st.rerun()이 곧장 화면을 바꿔버려서 재생바가 "떴다가 사라지는" 것처럼
+    보일 뿐 실제로 남지도 않는데, 그 순간 그려지는 재생바 자체가 화면 깜빡임으로
+    보인다는 지적(2026-08-21)으로 추가됨 — 합성/캐싱은 그대로 하되 화면에는
+    render_audio_autoplay()(화면 없는 자동재생)만 그린다. 도착 화면이 같은 문구를
+    _render_cached_speech()로 다시 찾아 들려주는 경우, 실제로 들리는 소리는 그쪽이다.
     """
     st.session_state.chat_log.append(("ai", message))
     try:
@@ -194,16 +219,86 @@ def speak(message: str, *, recipe_id: str | None = None, step_number: int | None
             audio_path = _common_audio_path(message)
 
         if not audio_path.exists():
-            from tts.infer import tts_synthesize
+            # 2026-08-19 팀 결정(docs/decisions.md #2)으로 배포가 GPU 데스크탑 상시 노출로
+            # 확정되면서 tts.infer.load_tts_model()이 CPU 폴백 없이 GPU를 필수로 요구한다 —
+            # "로컬 CPU라 오래 걸릴 수 있어요" 문구는 더 이상 해당하지 않아 제거했다.
+            with st.spinner("음성 합성 중이에요... 잠시만 기다려주세요."):
+                # prefetch_next_step_audio()의 백그라운드 스레드와 동시에 GPU 모델을
+                # 호출하지 않도록 _TTS_LOCK으로 직렬화(위 정의부 주석 참고). 프리페치가
+                # 이미 이 문구를 캐싱해뒀다면 락을 기다리는 동안 아래 audio_path.exists()가
+                # True가 될 수 있어, 락 안에서 한 번 더 확인해 중복 합성을 피한다.
+                with _TTS_LOCK:
+                    if not audio_path.exists():
+                        from tts.infer import tts_synthesize
 
-            with st.spinner("음성 합성 중이에요... 로컬 CPU라 오래 걸릴 수 있어요(최대 몇 분). 잠시만 기다려주세요."):
-                waveform, sample_rate = tts_synthesize(message)
-            audio_path.parent.mkdir(parents=True, exist_ok=True)
-            sf.write(audio_path, waveform, sample_rate)
+                        waveform, sample_rate = tts_synthesize(message)
+                        audio_path.parent.mkdir(parents=True, exist_ok=True)
+                        sf.write(audio_path, waveform, sample_rate)
 
-        render_audio_player(audio_path)
+        if hidden:
+            render_audio_autoplay(audio_path)
+        else:
+            render_audio_player(audio_path)
     except Exception as exc:  # noqa: BLE001 — 사용자에게 보여줄 실패이지 숨길 실패가 아님
         st.warning(f"음성 재생에 실패했어요(텍스트는 위에 표시돼요): {exc}")
+
+
+def _synthesize_and_cache(text: str, audio_path: Path) -> None:
+    """백그라운드 스레드에서 실행되는 합성 함수 — speak()와 캐싱 규칙은 같지만 st.* API를
+    전혀 안 쓴다(Streamlit 위젯 호출은 ScriptRunContext가 있는 메인 스레드에서만 안전해서,
+    백그라운드 스레드에서 st.spinner/st.warning 등을 쓰면 경고가 뜨거나 깨질 수 있음).
+    실패해도 조용히 넘어간다 — 프리페치일 뿐이라 실패하면 나중에 speak()가 그 자리에서
+    다시 시도한다(EC-05는 speak() 쪽에서 이미 담당)."""
+    if audio_path.exists():
+        return
+    try:
+        with _TTS_LOCK:
+            if audio_path.exists():
+                return
+            from tts.infer import tts_synthesize
+
+            waveform, sample_rate = tts_synthesize(text)
+            audio_path.parent.mkdir(parents=True, exist_ok=True)
+            sf.write(audio_path, waveform, sample_rate)
+    except Exception:  # noqa: BLE001 — 프리페치 실패는 speak()가 다시 시도하므로 조용히 넘어감
+        pass
+
+
+def prefetch_next_step_audio(view: dict, step_number: int) -> None:
+    """지금 보고 있는 조리 단계 화면에서, 다음 단계 음성을 백그라운드에서 미리 합성해
+    캐싱해둔다. TTS 합성 자체는 GPU에서도 문장 길이에 따라 3~9초 걸리는 게 실측됐고
+    (docs/decisions.md #2), 더 줄이려던 torch.compile 시도는 재컴파일 스톨 위험으로
+    보류했다(2026-08-22) — 그래서 합성 속도 자체 대신, 사용자가 지금 단계를 읽거나
+    요리하며 마이크에 말을 거는 그 시간(수 초~수십 초) 동안 다음 단계를 미리 합성해서,
+    실제로 "다음"이라고 말했을 때는 이미 캐싱된 파일을 즉시 재생하게 만든다 — 체감
+    속도 개선.
+
+    같은 (recipe_id, step_number) 조합에 대해 세션당 한 번만 스레드를 띄운다
+    (st.session_state의 "_prefetch_started" 집합으로 추적) — screen_cooking_step()이
+    매 rerun(마이크 입력 대기 등)마다 다시 호출돼도 스레드가 중복으로 쌓이지 않게 한다.
+    """
+    steps = view["steps"]
+    if step_number >= len(steps):  # 이미 마지막 단계 — 다음 단계 없음
+        return
+
+    next_step = steps[step_number]  # steps는 0-indexed라 steps[step_number]가 다음 단계
+    recipe_id = view["recipe_id"]
+    next_step_number = next_step.get("step_number", step_number + 1)
+    audio_path = _AUDIO_DIR / str(recipe_id) / f"{next_step_number:02d}.wav"
+    if audio_path.exists():
+        return
+
+    started = st.session_state.setdefault("_prefetch_started", set())
+    key = (recipe_id, next_step_number)
+    if key in started:
+        return
+    started.add(key)
+
+    threading.Thread(
+        target=_synthesize_and_cache,
+        args=(next_step["text"], audio_path),
+        daemon=True,
+    ).start()
 
 
 def listen(key_prefix: str, *, show_mic: bool = True) -> str | None:
@@ -226,10 +321,6 @@ def listen(key_prefix: str, *, show_mic: bool = True) -> str | None:
         placeholder="마이크 대신 직접 타이핑해도 돼요",
     )
 
-    import time as _t
-    with open(r"C:\Users\hlkm1\AppData\Local\Temp\claude\c--Users-hlkm1-Desktop-minha-portpolio-chefEar\74e331ba-ea6f-44df-b612-02d394d3af74\scratchpad\_debug_process_utterance.log", "a", encoding="utf-8") as _f:
-        _f.write(f"{_t.time()} LISTEN turn={turn} audio_file_is_none={audio_file is None}\n")
-
     if audio_file is not None:
         data, sample_rate = sf.read(io.BytesIO(audio_file.getvalue()))
         if data.ndim > 1:  # 스테레오면 모노로
@@ -237,8 +328,6 @@ def listen(key_prefix: str, *, show_mic: bool = True) -> str | None:
         from stt.infer import stt_transcribe
 
         text = stt_transcribe(data.astype(np.float32), sample_rate=sample_rate)
-        with open(r"C:\Users\hlkm1\AppData\Local\Temp\claude\c--Users-hlkm1-Desktop-minha-portpolio-chefEar\74e331ba-ea6f-44df-b612-02d394d3af74\scratchpad\_debug_process_utterance.log", "a", encoding="utf-8") as _f:
-            _f.write(f"{_t.time()} STT_RESULT turn={turn} audio_bytes={len(audio_file.getvalue())} duration_sec={len(data)/sample_rate:.3f} text={text!r}\n")
         if not text:
             st.info("잘 못 들었어요. 다시 말씀해주시거나 아래에 텍스트로 입력해주세요.")
             return None
@@ -290,7 +379,7 @@ def _ingredients_to_chips(raw: str) -> list[dict]:
         return []
     text = re.sub(r"\[[^\]]*\]", "", raw)
     items = [seg.strip() for seg in text.split("|") if seg.strip()]
-    return [{"name": item, "qty": "", "emoji": "⭐"} for item in items]
+    return [{"name": item, "qty": "", "emoji": "🟠"} for item in items]
 
 
 # ============================================================
@@ -299,9 +388,6 @@ def _ingredients_to_chips(raw: str) -> list[dict]:
 
 
 def process_utterance(text: str) -> None:
-    import time as _t
-    with open(r"C:\Users\hlkm1\AppData\Local\Temp\claude\c--Users-hlkm1-Desktop-minha-portpolio-chefEar\74e331ba-ea6f-44df-b612-02d394d3af74\scratchpad\_debug_process_utterance.log", "a", encoding="utf-8") as _f:
-        _f.write(f"{_t.time()} CALLED text={text!r}\n")
     st.session_state.chat_log.append(("user", text))
 
     session = st.session_state.pipeline_session
@@ -352,17 +438,24 @@ def process_utterance(text: str) -> None:
 
     if intent in ("진행", "재청취", "이전"):
         step = result.get("step")
-        # "다시"는 같은 파일을 다시 재생하는 거라 오디오 콘텐츠 자체가 안 바뀌어서
-        # nonce 없이는 iframe이 안 바뀐 걸로 보고 autoplay가 재실행되지 않는다. "다음"/
-        # "이전"도 이전에 방문했던 단계로 돌아갈 때(예: 2단계->1단계->2단계) 같은 문제가
-        # 재현될 수 있어 세 경우 모두 매번 nonce를 올려 항상 새로 로드되게 한다(theme.py
-        # render_audio_player() 참고).
-        st.session_state["_audio_replay_nonce"] = st.session_state.get("_audio_replay_nonce", 0) + 1
         if result.get("no_previous"):
             speak("1단계예요, 이전 단계가 없어요.")
         elif step is None:
             speak("마지막 단계까지 다 왔어요. 수고하셨어요!")
         else:
+            # "다시"는 같은 파일을 다시 재생하는 거라 오디오 콘텐츠 자체가 안 바뀌어서
+            # nonce 없이는 iframe이 안 바뀐 걸로 보고 autoplay가 재실행되지 않는다. "다음"/
+            # "이전"도 이전에 방문했던 단계로 돌아갈 때(예: 2단계->1단계->2단계) 같은 문제가
+            # 재현될 수 있어 실제 단계 오디오를 다시 들려줄 때만 nonce를 올려 항상 새로
+            # 로드되게 한다(theme.py render_audio_player() 참고).
+            #
+            # 2026-08-22 리포트: 이 nonce 증가를 "1단계예요..."/"마지막 단계까지..." 안내
+            # 분기 앞에서 공통으로 하고 있었는데, 그 두 경우엔 현재 화면의 단계 번호가
+            # 안 바뀐다 — 그런데도 nonce를 올리면 goto()의 rerun 직후 screen_cooking_step()이
+            # 화면에 그대로 남아있는 그 단계 카드의 캐시 오디오를 "새로 로드된 것"으로 보고
+            # 다시 자동재생해서, 방금 speak()로 들려준 안내 음성과 동시에 겹쳐 들렸다. 실제
+            # 단계 오디오를 다시 보여주는 이 분기에서만 nonce를 올려서 막는다.
+            st.session_state["_audio_replay_nonce"] = st.session_state.get("_audio_replay_nonce", 0) + 1
             speak(step["text"], recipe_id=session.get("current_recipe_id"), step_number=step.get("step_number"))
         goto("cooking_step")
         return
@@ -409,13 +502,18 @@ def fallback_buttons(key_prefix: str) -> None:
     for col, button in ((c1, "이전"), (c2, "다시"), (c3, "다음")):
         with col:
             if st.button(button, key=f"{key_prefix}_{button}", use_container_width=True):
-                st.session_state["_audio_replay_nonce"] = st.session_state.get("_audio_replay_nonce", 0) + 1
                 result = manual_fallback(session, button, client=client)
                 if result.get("no_previous"):
                     speak("1단계예요, 이전 단계가 없어요.")
                 elif result.get("step") is None:
                     speak("마지막 단계까지 다 왔어요. 수고하셨어요!")
                 else:
+                    # process_utterance()의 같은 분기와 동일한 이유(2026-08-22) — 실제 단계
+                    # 오디오를 다시 보여줄 때만 nonce를 올린다. "1단계예요..."/"마지막
+                    # 단계까지..." 안내는 화면의 단계가 안 바뀌는데 nonce만 올리면, rerun
+                    # 후 그 자리에 남아있는 단계 카드의 캐시 오디오가 다시 자동재생되면서
+                    # 방금 들려준 안내 음성과 겹쳐 들린다.
+                    st.session_state["_audio_replay_nonce"] = st.session_state.get("_audio_replay_nonce", 0) + 1
                     speak(
                         result["step"]["text"],
                         recipe_id=session.get("current_recipe_id"),
@@ -439,9 +537,21 @@ def screen_start() -> None:
     )
     render_big_mic()
 
-    text = listen("start")
+    # register_intro/register_dish_name과 같은 이유로(2026-08-21) listen()이 따로 그리는
+    # "말씀해주세요" 녹음 위젯은 꺼둔다 - 이 화면엔 이미 render_big_mic()이 그리는 원형
+    # 마이크 아이콘 + "마이크 켜기" 버튼으로 여는 자체 녹음 위젯이 있어서, 같은 화면에
+    # 마이크 녹음 위젯이 두 벌 겹쳐 보이는 문제가 있었다. 텍스트 입력 대체 경로는 그대로
+    # 남아있고, 실제 음성 녹음은 render_big_mic() 쪽 위젯으로 여전히 가능하다.
+    text = listen("start", show_mic=False)
     if text:
         process_utterance(text)
+
+    # 2026-08-21: 위쪽에만 render_spacer()가 있고 아래쪽엔 없어서, block-container의
+    # flex:1 남는 공간이 전부 위에만 쌓여 콘텐츠가 화면 아래쪽으로 밀렸다 - 뷰포트가
+    # 높을수록(세로로 긴 화면비) 남는 공간 자체가 커져서 그만큼 더 크게 벌어져 보였다.
+    # 다른 화면들(register_intro, complete, login 등)처럼 아래에도 render_spacer()를
+    # 넣어 남는 공간을 위아래로 똑같이 나눠 화면 비율과 무관하게 수직 중앙 정렬되게 한다.
+    render_spacer()
 
 
 def screen_recipe_confirm() -> None:
@@ -451,14 +561,32 @@ def screen_recipe_confirm() -> None:
         return
 
     render_badge("조회수 1위 표준 레시피 자동 선택 · 되묻지 않음 (FR-05)")
-    render_chat(st.session_state.chat_log)
+    # 2026-08-22 재요청: 이전 대화 기록(사용자 질문 등)은 아예 안 보여주고, 마지막 AI
+    # 메시지를 챗봇 말풍선 없이 요리명/문장 두 줄로 줄바꿈해서(요리명은 크게) 타자기처럼
+    # 한 글자씩 나타나는 순수 텍스트로 보여준다. 세 줄 문구는 process_utterance()의
+    # 조회 확인 메시지(`speak(f'{dish_name}, 조회수 1위 표준 레시피예요. 이걸로
+    # 시작할까요?')`)와 내용이 같아야 한다 — 그쪽은 TTS로 자연스럽게 읽히려고 한 문장
+    # 그대로 두고, 화면 표시만 여기서 줄 단위로 다시 나눈다.
+    chat_log = st.session_state.chat_log
+    if chat_log and chat_log[-1][0] == "ai":
+        render_typewriter_message(
+            [view["dish_name"], "조회수 1위 표준 레시피예요.", "이걸로 시작할까요?"],
+            key=f"recipe_confirm:{chat_log[-1][1]}",
+        )
 
     st.markdown("**재료 미리보기**")
     render_chips(_ingredients_to_chips(view["ingredients_raw"]))
 
+    render_mic_bar("듣는 중", '"응" 또는 다른 요청을 말씀해주세요', listening=True)
+
     # "응"(긍정) 확인은 classify_intent()가 처리하지 않는다(의도적 제외,
     # tests/integration_test.md 기록) — 이 화면 안에서만 문자열로 직접 우회 처리.
-    text = listen("recipe_confirm")
+    # cooking_step/register_intro/register_dish_name과 같은 이유(2026-08-21/22) — 바로 위
+    # render_mic_bar()가 이미 "듣는 중" 펄스 애니메이션으로 마이크가 켜져 있음을 보여주고
+    # 있어서, listen()이 따로 그리는 실제 녹음 위젯("말씀해주세요" 박스)까지 있으면 마이크
+    # 안내가 중복돼 보인다는 지적(2026-08-22)으로 show_mic=False로 꺼둔다(완전히 지우진
+    # 않음, 나중에 되돌릴 수 있게). 텍스트 입력 대체 경로는 그대로 남아있다.
+    text = listen("recipe_confirm", show_mic=False)
     if text:
         norm = text.strip().rstrip("?!. ")
         if norm in ("응", "네", "좋아", "좋아요", "그래", "그래요", "시작", "응, 시작할게요"):
@@ -488,6 +616,10 @@ def screen_cooking_step() -> None:
     step_number = min(session.get("step_number", 1), total)
     current = view["steps"][step_number - 1]
 
+    # 사용자가 지금 단계를 보고/듣고 있는 동안 다음 단계 음성을 미리 합성해둔다 —
+    # prefetch_next_step_audio() 정의부 주석 참고(2026-08-22, TTS 체감 속도 개선).
+    prefetch_next_step_audio(view, step_number)
+
     render_badge(f'{view["dish_name"]} · {step_number} / {total} 단계')
 
     # 2026-08-21: speak()가 만드는 재생 위젯은 그 직후 goto()의 st.rerun()으로 화면이
@@ -497,7 +629,7 @@ def screen_cooking_step() -> None:
     # (speak()가 쓰는 것과 같은 ui/assets/audio/<recipe_id>/<step:02d>.wav 캐시 경로).
     cached_audio_path = _AUDIO_DIR / str(view["recipe_id"]) / f"{step_number:02d}.wav"
     if cached_audio_path.exists():
-        render_step_card(
+        nav_target = render_step_card(
             total,
             step_number,
             current["text"],
@@ -505,7 +637,21 @@ def screen_cooking_step() -> None:
             audio_nonce=st.session_state.get("_audio_replay_nonce", 0),
         )
     else:
-        render_step_card(total, step_number, current["text"])
+        nav_target = render_step_card(total, step_number, current["text"])
+
+    # 2026-08-21: 점을 눌러 그 단계로 바로 이동하거나 화살표로 이전/다음 단계로 넘어간
+    # 경우 - render_step_card()는 표시만 하고 실제 상태 전환은 여기서 한다(theme.py는
+    # orchestration을 몰라서). [이전][다음] 버튼(fallback_buttons)이 manual_fallback()으로
+    # 하는 것과 같은 효과(세션 갱신 + 음성 재생 + 재생 nonce 증가)를 낸다 - 단, 점 클릭은
+    # 임의의 단계로 바로 건너뛸 수 있어야 해서 manual_fallback()(상대 이동만 지원)
+    # 대신 view["steps"]에서 바로 읽는다(get_precomputed_steps()로 이미 전체를
+    # 가져와서 recipe_view에 캐싱돼 있어 추가 조회가 필요 없다).
+    if nav_target is not None:
+        session["step_number"] = nav_target
+        st.session_state["_audio_replay_nonce"] = st.session_state.get("_audio_replay_nonce", 0) + 1
+        target_step = view["steps"][nav_target - 1]
+        speak(target_step["text"], recipe_id=view["recipe_id"], step_number=target_step.get("step_number", nav_target))
+        goto("cooking_step")
 
     st.markdown("**오늘의 재료**")
     render_chips(_ingredients_to_chips(view["ingredients_raw"]))
@@ -513,9 +659,14 @@ def screen_cooking_step() -> None:
     if st.session_state.chat_log:
         render_chat(st.session_state.chat_log[-4:])
 
-    render_mic_bar("듣는 중", '"다음" · "다시" · "재료 바꾸기"', listening=True)
+    render_mic_bar("듣는 중", '"이전" · "다시" · "다음"', listening=True)
 
-    text = listen("cooking_step")
+    # register_intro/register_dish_name과 같은 이유(2026-08-21) — 바로 위 render_mic_bar()가
+    # 이미 "듣는 중" 펄스 애니메이션으로 마이크가 켜져 있음을 보여주고 있어서, listen()이
+    # 따로 그리는 실제 녹음 위젯("말씀해주세요" 박스)까지 있으면 마이크 안내가 중복돼
+    # 보인다는 지적(2026-08-22)으로 여기도 show_mic=False로 꺼둔다(완전히 지우진 않음,
+    # 나중에 되돌릴 수 있게). 텍스트 입력 대체 경로는 그대로 남아있다.
+    text = listen("cooking_step", show_mic=False)
     if text:
         process_utterance(text)
 
@@ -695,7 +846,7 @@ def screen_register_steps() -> None:
 
     if reg["instructions"] and st.button("네, 저장할게요", type="primary", use_container_width=True):
         register_recipe(st.session_state.pipeline_session, "confirm", None, client=get_client())
-        speak(_REGISTER_SAVED_MESSAGE)
+        speak(_REGISTER_SAVED_MESSAGE, hidden=True)
         goto("complete")
 
 
@@ -888,9 +1039,62 @@ SCREENS = {
 }
 
 
+def _warm_up_models() -> None:
+    """STT/LLM/TTS 모델을 화면이 뜨는 시점에 미리 로드해둔다(`tests/test_ui.py`와 동일 패턴).
+
+    셋 다 첫 로딩 비용이 있어서(원인은 서로 다름, 아래 참고) 미리 안 해두면 사용자가
+    실제로 말을 걸거나("start" 화면 listen()) 첫 응답을 들을 때(speak()) 그 비용을
+    그대로 보게 된다 — speak()/listen()/process_utterance()가 stt.infer.stt_transcribe,
+    tts.infer.tts_synthesize, orchestration.entity_extract_llm.extract_dish_name_llm을
+    그 자리에서 lazy import해서 쓰기 때문이다. load_ct2_model()/load_llm()/
+    load_tts_model() 셋 다 전역 캐시라서(stt/infer.py의 _ct2_model, llm/infer.py의
+    _model, tts/infer.py의 전역 캐시) 이미 로드됐으면 즉시 반환 — 매 rerun(사용자
+    조작)마다 이 함수를 다시 호출해도 안전하고 빠르다.
+
+    STT: 처음엔 "CUDA 초기화가 느리다"고 짐작했으나(2026-08-20), 실측해보니 GPU/CPU
+    사용률이 로딩 내내 0%였다 — 프로젝트 폴더가 네트워크 공유 드라이브(CIFS, ~9MB/s)에
+    있어서 model.bin(778MB) 읽기 자체가 87초 걸렸던 것. .env의 STT_LOCAL_CACHE_DIR로
+    로컬 디스크 사본을 우선 읽게 고쳐서 1.2초로 줄었다(`src/stt/infer.py` 참고).
+    LLM: EXAONE 가중치는 원래 ~/.cache/huggingface(로컬 디스크)에 캐시되므로 이 문제가
+    없다 — 최초 1회 인터넷에서 받는 것만 느리고(수 분), 그다음부턴 13초 정도로 빠르다.
+    TTS: LLM과 마찬가지로 ~/.cache/huggingface에서 읽어서 네트워크 드라이브 문제는
+    없다 — 7.9GB 모델이라 로딩 자체에 17초 정도 걸리는 게 정상(실측).
+
+    test_ui.py는 파일 하나짜리 수동 테스트 화면이라 로딩 실패 시 그냥 죽어도 되지만,
+    이 파일(app.py)은 실제 서비스 화면 전체를 띄우는 진입점이다 — 세 모델 중 하나라도
+    준비가 안 돼 있으면(예: 아직 `src/stt/export_ct2.py`로 변환 전이라 CT2 모델이 없는
+    개발 환경) 여기서 예외가 그대로 올라가 화면 자체가 뜨지도 못하고 죽는다. speak()가
+    이미 따르는 EC-05 원칙(화면 텍스트는 항상 남고, 음성 관련 실패만 사용자에게 알림)과
+    똑같이 각 모델 로딩을 개별로 감싸서, 준비 안 된 모델이 있어도 앱은 계속 뜨고 나머지
+    기능(텍스트 입력 흐름 등)은 그대로 쓸 수 있게 한다.
+    """
+    from llm.infer import load_llm
+    from stt.infer import load_ct2_model
+    from tts.infer import load_tts_model
+
+    with st.spinner("STT 모델 준비 중... (최초 1회만, 몇 초 걸릴 수 있음)"):
+        try:
+            load_ct2_model()
+        except Exception as exc:  # noqa: BLE001 — EC-05, 화면은 계속 뜨게 함
+            st.warning(f"STT 모델을 준비하지 못했어요(음성 인식이 안 될 수 있어요, 텍스트 입력은 계속 됩니다): {exc}")
+
+    with st.spinner("LLM(EXAONE) 모델 준비 중... (최초 1회는 다운로드로 몇 분 걸릴 수 있음)"):
+        try:
+            load_llm()
+        except Exception as exc:  # noqa: BLE001
+            st.warning(f"LLM 모델을 준비하지 못했어요(요리명 추출이 안 될 수 있어요): {exc}")
+
+    with st.spinner("TTS(Qwen3-TTS) 모델 준비 중... (약 17초, 최초 1회만)"):
+        try:
+            load_tts_model()
+        except Exception as exc:  # noqa: BLE001
+            st.warning(f"TTS 모델을 준비하지 못했어요(음성 응답이 안 나올 수 있어요, 텍스트는 계속 표시돼요): {exc}")
+
+
 def main() -> None:
     st.set_page_config(page_title="ChefEar", page_icon="🍲", layout="centered", initial_sidebar_state="collapsed")
     init_state()
+    _warm_up_models()
     inject_css()
     # 로그인 아이콘은 start 화면에서만 "ChefEar" 제목과 나란히 보여준다(2026-08-21 요청).
     if render_brand(show_login=(st.session_state.screen == "start")):

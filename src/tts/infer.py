@@ -99,16 +99,17 @@ def load_tts_model():
         )
 
 
-    if torch.cuda.is_available():
+    # 2026-08-19 팀 결정(docs/decisions.md #2): CPU(HF Spaces Basic)는 목표 응답시간(5초)을
+    # 못 맞춰 포기하고, 배포를 GPU 데스크탑(RTX 5070) 상시 노출(Tailscale)로 전환했다 —
+    # CPU 폴백은 더 이상 배포 대상이 아니라서 없애고 GPU를 필수로 요구한다.
+    if not torch.cuda.is_available():
 
-        device_map, dtype = "cuda:0", torch.bfloat16
+        raise RuntimeError(
+            "GPU(CUDA)가 필요합니다 — 배포 방향이 GPU 전용으로 확정됨(docs/decisions.md #2). "
+            "CUDA 드라이버/torch 설치를 확인할 것."
+        )
 
-    else:
-
-        # HF Spaces CPU Basic 배포 환경 — tests/tts_cpu_inference_test.py의 실측 조건과 동일하게 맞춤
-        device_map, dtype = "cpu", torch.float32
-
-        torch.set_num_threads(2)
+    device_map, dtype = "cuda:0", torch.bfloat16
 
 
     try:

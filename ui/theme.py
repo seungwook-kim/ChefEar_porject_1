@@ -221,7 +221,59 @@ div:has(> button[aria-label="Show password"]), div:has(> button[aria-label="Hide
 .ce-dots .d.active { background: var(--accent); transform: scale(1.25); }
 .ce-dots .d.done { background: var(--accent-soft-text); opacity:.45; }
 
+/* cooking_step 상단 점을 실제로 눌러서 그 단계로 바로 이동할 수 있게 만든 버전
+   (2026-08-21 요청) - _dots_html()의 장식용 span 대신 진짜 st.button()을 한 줄에
+   나란히 놓는다. st.columns로 나누면 my_recipe_actions_와 같은 이유로 화면이
+   넓을수록 점 사이 간격이 벌어지므로, 세로 블록 하나에 버튼들을 넣고 여기서
+   가로 배치로 강제한다. 버튼 상태(active/done/todo)를 키 이름 자체에 인코딩해서
+   (cs_dot_active_01 등) CSS가 셀렉터만으로 바로 스타일을 입힐 수 있게 한다. */
+[data-testid="stVerticalBlock"][class*="st-key-cs_dots_row"] {
+  flex-direction: row; flex-wrap: nowrap; justify-content: center; gap: 2px;
+}
+[class*="st-key-cs_dots_row"] [data-testid="stElementContainer"] { width: auto; }
+[class*="st-key-cs_dot_todo_"] button,
+[class*="st-key-cs_dot_done_"] button,
+[class*="st-key-cs_dot_active_"] button {
+  position: relative; width: 22px; height: 22px; min-width: 22px; min-height: 22px;
+  padding: 0; border: none; background: transparent; box-shadow: none; cursor: pointer;
+  color: transparent; font-size: 0; line-height: 0;
+}
+[class*="st-key-cs_dot_todo_"] button::after,
+[class*="st-key-cs_dot_done_"] button::after,
+[class*="st-key-cs_dot_active_"] button::after {
+  content: ""; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 9px; height: 9px; border-radius: 50%; background: var(--border);
+}
+[class*="st-key-cs_dot_done_"] button::after { background: var(--accent-soft-text); opacity: .45; }
+[class*="st-key-cs_dot_active_"] button::after {
+  background: var(--accent); transform: translate(-50%, -50%) scale(1.25);
+}
+
 .ce-step-title { font-size:22px; font-weight:800; text-align:center; line-height:1.45; margin: 32px 0 14px !important; }
+/* 조리순서 단계 텍스트 양옆의 이전/다음 화살표(2026-08-21 요청) - 화살표는 각자 칸
+   가장자리에 붙어있고 가운데 텍스트 칸만 늘어나면 되므로(2개 아이콘이 서로 벌어지는
+   my_recipe_actions_ 문제와 달리 여기선 오히려 벌어지는 게 의도된 배치), st.columns를
+   그대로 써도 된다. */
+[class*="st-key-cs_prev_arrow"] button, [class*="st-key-cs_next_arrow"] button {
+  background: var(--surface-alt); border: 1px solid var(--border); color: var(--accent);
+  /* use_container_width=True가 버튼을 칸 전체 너비로 늘리는데, 아이콘 하나만 들어있어서
+     칸을 좁게 잡아도(st.columns([1,7,1])) 버튼이 뚱뚱해 보인다는 지적(2026-08-22)으로
+     버튼 자체 너비를 강제로 좁혀 칸 안에서 가운데 정렬한다. */
+  width: 36px !important; min-width: 36px !important; margin: 0 auto;
+}
+/* 2026-08-22: st.columns([1,10,1])로 비율을 줘도 화면엔 반영 안 됐는데, 원인은 위(298줄
+   근처) "컬럼이 항상 가로로 나란히 있도록" 규칙의 `div[data-testid="stColumn"] { flex: 1 1
+   0 !important; }` — 이게 이 앱의 모든 st.columns()를 강제로 똑같은 너비(1:1:1)로 만들어서
+   Python 쪽 비율 인자를 완전히 무시하고 있었다. cs_step_card 안의 컬럼(화살표-텍스트-화살표)
+   에만 더 구체적인 선택자로 그 규칙을 다시 덮어써서, 화살표 칸은 좁게 고정하고 텍스트
+   칸이 남는 공간을 전부 차지하게 한다. */
+[class*="st-key-cs_step_card"] div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:nth-of-type(1),
+[class*="st-key-cs_step_card"] div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:nth-of-type(3) {
+  flex: 0 0 44px !important; width: 44px !important;
+}
+[class*="st-key-cs_step_card"] div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:nth-of-type(2) {
+  flex: 1 1 auto !important; width: auto !important;
+}
 
 .ce-chip-grid { display:flex; flex-wrap:wrap; column-gap:9px; row-gap:16px; }
 .ce-chip { display:inline-flex; align-items:center; gap:6px; background: var(--surface-alt); border:1px solid var(--border);
@@ -330,7 +382,15 @@ div.stButton > button[kind="primary"]:hover { background: var(--accent-dark); bo
 
 .ce-big-mic-wrap { display:flex; justify-content:center; margin: 34px 0 8px; cursor: pointer; }
 .ce-big-mic { width:84px; height:84px; border-radius:50%; display:grid; place-items:center;
-  background: var(--surface-alt); color: var(--accent); border: 2px solid var(--border); cursor: pointer; }
+  background: var(--surface-alt); color: var(--accent); border: 2px solid var(--border); cursor: pointer;
+  animation: ce-big-mic-pulse 1.8s ease-in-out infinite; }
+/* start 화면 큰 마이크 아이콘이 커졌다 작아지길 반복해서 "지금 듣고 있다"는 느낌을 주는
+   숨쉬기(breathing) 애니메이션 - ce-mic-icon.listening::after의 퍼지는 링과는 다르게,
+   여긴 아이콘 자체가 확대/축소된다(2026-08-21 요청). */
+@keyframes ce-big-mic-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.12); }
+}
 
 /* start 화면의 실제 녹음 위젯(st.audio_input) - 장식용 원형 마이크 바로 아래 놓고, 앱
    색감에 맞춰 폭을 카드 안쪽으로 좁히고 둥글게 다듬는다. */
@@ -578,6 +638,75 @@ def render_badge(text: str) -> None:
     st.markdown(f'<span class="ce-badge">{text}</span>', unsafe_allow_html=True)
 
 
+def render_typewriter_message(lines: list[str], *, key: str, speed_ms: int = 28) -> None:
+    """AI 메시지를 아바타 아이콘·이름표·말풍선 카드 없이(2026-08-22 요청 — "챗봇 느낌
+    안 나게, 글씨만 보이게") 여러 줄로 줄바꿈해서, 한 글자씩 순서대로 타자기처럼
+    나타나게 그린다(recipe_confirm의 "이걸로 시작할까요?" 확인 질문용, 2026-08-22
+    재요청 — 요리명/문장을 줄바꿈하고 요리명만 크게 강조).
+
+    lines: 화면에 줄 단위로 보여줄 목록(예: ["된장찌개", "조회수 1위 표준 레시피예요.",
+    "이걸로 시작할까요?"]). 첫 줄(보통 요리명)은 크고 굵게, 나머지는 보통 크기로
+    그린다. 애니메이션은 줄 순서대로 한 줄씩 다 친 뒤 다음 줄로 넘어간다.
+
+    st.markdown()에 <script>를 넣어도 브라우저가 innerHTML로 삽입된 스크립트는 실행하지
+    않는다(render_audio_player()가 st.iframe()을 쓰는 것과 같은 이유) — 그래서 여기도
+    st.iframe()으로 그려서 JS가 실제로 동작하게 한다.
+
+    key로 세션 안에서 이미 재생한 메시지인지 추적한다 — 같은 화면이 다른 이유로(마이크
+    입력 대기 등) 다시 그려질 때마다 애니메이션이 처음부터 또 재생되면 거슬리므로,
+    한 번 재생된 key는 이후 정적 텍스트로 바로 보여준다.
+    """
+    played = st.session_state.setdefault("_typewriter_played", set())
+
+    style = """
+    <style>
+      body { margin:0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; text-align:center; }
+      p { margin:0 0 4px; line-height:1.4; text-align:center; }
+      p:last-child { margin-bottom:0; }
+      .head { font-size:26px; font-weight:800; color:#ee7b36; }
+      .rest { font-size:15px; font-weight:600; color:#241c15; }
+    </style>
+    """
+
+    def _cls(idx: int) -> str:
+        return "head" if idx == 0 else "rest"
+
+    if key in played:
+        rows = "".join(f'<p><span class="{_cls(i)}">{line}</span></p>' for i, line in enumerate(lines))
+        st.iframe(f"{style}{rows}", height="content")
+        return
+
+    played.add(key)
+    placeholders = "".join(
+        f'<p><span class="{_cls(i)}" id="tw-{i}"></span></p>' for i in range(len(lines))
+    )
+    html = f"""
+    {style}
+    {placeholders}
+    <script>
+      const linesText = {json.dumps(lines)};
+      let lineIdx = 0;
+      let charIdx = 0;
+      function tick() {{
+        if (lineIdx >= linesText.length) return;
+        const el = document.getElementById("tw-" + lineIdx);
+        const text = linesText[lineIdx];
+        if (charIdx <= text.length) {{
+          el.textContent = text.slice(0, charIdx);
+          charIdx += 1;
+          setTimeout(tick, {speed_ms});
+        }} else {{
+          lineIdx += 1;
+          charIdx = 0;
+          setTimeout(tick, {speed_ms});
+        }}
+      }}
+      tick();
+    </script>
+    """
+    st.iframe(html, height="content")
+
+
 def render_chat(rows: list[tuple[str, str]]) -> None:
     """rows: [(role, text), ...], role은 'user' 또는 'ai'."""
     parts = ['<div class="ce-transcript">']
@@ -617,6 +746,24 @@ def _dots_html(total: int, current: int) -> str:
 
 def render_dots(total: int, current: int) -> None:
     st.markdown(_dots_html(total, current), unsafe_allow_html=True)
+
+
+def render_interactive_dots(total: int, current: int) -> int | None:
+    """render_step_card()의 점(dots) - _dots_html()과 똑같이 생겼지만 실제 st.button()이라
+    눌러서 그 단계로 바로 이동할 수 있다(2026-08-21, 조리순서 화면 요청). 클릭된 단계
+    번호(1..total)를 반환하고, 아무 것도 안 눌렸으면 None을 반환한다.
+
+    register_intro 등 다른 화면의 render_dots()(진행 단계 안내용, 클릭 불가)는 그대로
+    둔다 - 이건 cooking_step처럼 "실제로 그 단계로 건너뛸 수 있어야" 의미 있는 화면
+    전용이다.
+    """
+    target: int | None = None
+    with st.container(key="cs_dots_row"):
+        for i in range(1, total + 1):
+            state = "active" if i == current else ("done" if i < current else "todo")
+            if st.button(" ", key=f"cs_dot_{state}_{i:02d}", help=f"{i}단계로 이동"):
+                target = i
+    return target
 
 
 _WAVE_HEIGHTS = [6, 10, 16, 24, 14, 22, 28, 18, 26, 12, 20, 9, 16, 24, 14, 8, 12, 6, 10, 6]
@@ -775,7 +922,7 @@ def render_step_card(
     show_player: bool = True,
     audio_path: str | Path | None = None,
     audio_nonce: int | str = 0,
-) -> None:
+) -> int | None:
     """조리 화면의 카드(점 표시 + 단계 텍스트 + 재생바)를 흰 박스 안에 그린다.
 
     순수 HTML(`<div class="ce-card">`)로 카드를 열고 여러 st.markdown 호출을 거쳐
@@ -789,19 +936,52 @@ def render_step_card(
     순서대로 넣으면 진짜로 같은 흰 박스 안에 nesting된다(2026-08-19, 재생바를 카드
     안에 넣어달라는 요청으로 구조 변경).
 
-    audio_path가 주어지면 그 wav로 render_audio_player()를 카드 안에 넣는다(진짜
-    재생 가능). None이고 show_player=True면 장식용 정지 파형만 보여준다(다른
-    레시피처럼 오디오가 없는 경우).
+    audio_path가 주어지면 그 wav를 render_audio_autoplay()로 카드 안에서 자동재생한다
+    (2026-08-22부터 재생 버튼/파형 UI는 없앰 — 화면엔 안 보이고 소리만 남). audio_path가
+    None이면 아무것도 안 그린다.
+
+    2026-08-21: 점을 눌러 그 단계로 바로 이동하고, 단계 텍스트 양옆 화살표로
+    이전/다음 단계로 넘어갈 수 있게 해달라는 요청 - 이 함수는 순수 표시만 담당하고
+    (theme.py는 orchestration을 모른다) 실제 단계 전환(세션 갱신·음성 재생)은
+    호출부(screen_cooking_step())가 반환값을 보고 처리한다. 점 클릭과 화살표 클릭
+    둘 다 같은 반환값(이동할 단계 번호)으로 합쳐서 돌려준다 - 호출부가 "누가
+    눌렀는지"까지 구분할 필요는 없어서다.
     """
+    nav_target: int | None = None
     with st.container(key="cs_step_card"):
-        st.markdown(
-            _dots_html(total, current_step) + f'<p class="ce-step-title">{step_text}</p>',
-            unsafe_allow_html=True,
-        )
+        nav_target = render_interactive_dots(total, current_step)
+
+        # vertical_alignment="center": 단계 텍스트가 여러 줄로 길어져도 화살표가 위쪽에
+        # 붙지 않고 텍스트 블록 세로 중앙에 맞춰져서, 화살표와 텍스트가 시각적으로
+        # "같은 줄"에 있는 것처럼 보이게 한다(2026-08-22 요청, 기본값 "top"이라 긴 텍스트일
+        # 때 화살표가 첫 줄에만 붙어 보였음).
+        # 화살표 버튼 자체는 CSS(cs_prev_arrow/cs_next_arrow, 36px 고정)로 이미 좁혀놔서
+        # 칸을 예전만큼 넓게(1) 안 잡아도 된다 — 화살표 칸을 줄이고 그만큼 가운데 텍스트
+        # 칸을 넓힌다(2026-08-22 요청).
+        arrow_l, mid, arrow_r = st.columns([1, 10, 1], vertical_alignment="center")
+        with arrow_l:
+            if st.button(
+                ":material/chevron_left:", key="cs_prev_arrow", help="이전 단계",
+                disabled=current_step <= 1, use_container_width=True,
+            ):
+                nav_target = current_step - 1
+        with mid:
+            st.markdown(f'<p class="ce-step-title">{step_text}</p>', unsafe_allow_html=True)
+        with arrow_r:
+            if st.button(
+                ":material/chevron_right:", key="cs_next_arrow", help="다음 단계",
+                disabled=current_step >= total, use_container_width=True,
+            ):
+                nav_target = current_step + 1
+
+        # 2026-08-22 요청: 재생 버튼(원형 버튼+파형) 자체를 화면에서 없앤다. 실제 오디오가
+        # 있을 땐 render_audio_player() 대신 화면 없는 render_audio_autoplay()를 써서
+        # 음성 자동재생은 그대로 유지하고 버튼/파형 UI만 뺀다. 오디오가 아직 없을 때의
+        # 장식용 정지 파형(_player_html())도 같이 없앤다 — 안 눌리는 가짜 버튼을 남겨둘
+        # 이유가 없어서다.
         if audio_path is not None:
-            render_audio_player(audio_path, nonce=audio_nonce)
-        elif show_player:
-            st.markdown(_player_html(), unsafe_allow_html=True)
+            render_audio_autoplay(audio_path, nonce=audio_nonce)
+    return nav_target
 
 
 def render_mic_bar(state: str, hint: str, listening: bool = True) -> None:

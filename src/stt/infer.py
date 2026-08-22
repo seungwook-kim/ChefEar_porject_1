@@ -158,6 +158,13 @@ def load_stt_model():
     if _model is not None and _processor is not None:
         return _model, _processor
 
+    # 4bit(NF4) 양자화는 bitsandbytes가 CUDA 전용으로 지원한다(GPU 없이는 로드 자체가
+    # 안 됨) — 다른 파일들(tts/infer.py, llm/infer.py, 이 파일의 load_ct2_model()/
+    # load_realtime_stt_model())과 같은 형태로 명확한 에러 메시지를 먼저 준다.
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "GPU(CUDA)가 필요합니다 — 4bit(NF4) 양자화는 bitsandbytes가 CUDA에서만 지원함."
+        )
 
     # --------------------------------------------------------
     # Processor
@@ -727,15 +734,17 @@ def load_ct2_model():
 
     model_path = _resolve_ct2_model_path()
 
-    # 2026-08-20: 로컬 GPU 데스크탑에서 개발 중엔 device="cuda"로 — 원래 HF Spaces CPU
-    # Basic(2 vCPU) 배포 조건(device="cpu", cpu_threads=2)을 흉내내던 설정이었는데, 실측상
-    # 짧은 발화 하나에 6~7초씩 걸려 로컬 테스트가 너무 느렸다(사용자 지시로 변경, 2026-08-20).
-    # CPU 배포 속도 실측(목표 5초, 여전히 미달)은 tests/tts_cpu_inference_test.py처럼 별도
-    # 벤치마크로 device="cpu"를 명시해서 재현해야 한다 — 이 함수 자체는 배포 시 다시
-    # device="cpu"로 되돌려야 함(TODO, HF Spaces엔 GPU가 없음).
+    # 2026-08-19 팀 결정(docs/decisions.md #2): 배포를 GPU 데스크탑 상시 노출(Tailscale)로
+    # 확정하면서 "HF Spaces CPU Basic" 배포 전제 자체가 없어졌다 — CPU 폴백 없이 GPU를
+    # 필수로 요구한다. CPU 속도 실측이 다시 필요하면 tests/tts_cpu_inference_test.py처럼
+    # 별도 벤치마크에서 device="cpu"를 명시해서 재현할 것(이 함수 자체는 항상 cuda).
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "GPU(CUDA)가 필요합니다 — 배포 방향이 GPU 전용으로 확정됨(docs/decisions.md #2)."
+        )
     _ct2_model = WhisperModel(model_path, device="cuda", compute_type="int8")
 
-    print(f"✅ ChefEar STT(faster-whisper, int8) 로드 완료: {model_path}")
+    print(f"✅ ChefEar STT(faster-whisper, int8) 로드 완료: {model_path} (device=cuda)")
 
     return _ct2_model
 
@@ -1177,8 +1186,16 @@ def load_realtime_stt_model():
 
     from faster_whisper import WhisperModel
 
-    _realtime_model = WhisperModel(REALTIME_MODEL_SIZE, device="cpu", compute_type="int8")
-    print(f"[STT] 실시간 추론용 faster-whisper 모델 로드 완료: {REALTIME_MODEL_SIZE} (원본, 파인튜닝 아님)")
+    # 2026-08-19 팀 결정(docs/decisions.md #2): 배포를 GPU 데스크탑 상시 노출로 확정 —
+    # 이전엔 device="cpu"로 하드코딩돼 있어서 실제 서비스 경로(app.py의 listen() ->
+    # stt_transcribe(), 이 파일에서 마지막에 정의된 stt_transcribe가 이 함수를 씀)가
+    # 로컬 GPU 데스크탑에서도 항상 CPU로만 추론했다. CPU 폴백 없이 GPU를 필수로 요구한다.
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "GPU(CUDA)가 필요합니다 — 배포 방향이 GPU 전용으로 확정됨(docs/decisions.md #2)."
+        )
+    _realtime_model = WhisperModel(REALTIME_MODEL_SIZE, device="cuda", compute_type="int8")
+    print(f"[STT] 실시간 추론용 faster-whisper 모델 로드 완료: {REALTIME_MODEL_SIZE} (원본, 파인튜닝 아님, device=cuda)")
     return _realtime_model
 
 
