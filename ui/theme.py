@@ -257,11 +257,18 @@ div:has(> button[aria-label="Show password"]), div:has(> button[aria-label="Hide
   background: var(--accent); transform: translate(-50%, -50%) scale(1.25);
 }
 
-.ce-step-title { font-size:22px; font-weight:800; text-align:center; line-height:1.45; margin: 32px 0 14px !important; }
+/* 2026-08-22 리포트 — 위아래 margin이 32px/14px로 비대칭이었어서, vertical_alignment=
+   "center"가 화살표 칸과 텍스트 칸을 각자의 박스(margin 포함) 높이 기준으로 정렬하다 보니
+   텍스트가 화살표보다 아래로 처져 보였다(짧은 한 줄 문장일수록 그 9px 안팎의 어긋남이
+   전체 높이에서 차지하는 비중이 커서 더 두드러짐). margin을 0으로 맞춰서 텍스트 박스
+   높이 = 실제 글자 높이가 되게 하고, 점(dots)과의 간격은 아래 stHorizontalBlock의
+   margin-top으로 화살표·텍스트 칸 셋을 한 덩어리로 같이 밀어서 만든다. */
+.ce-step-title { font-size:22px; font-weight:800; text-align:center; line-height:1.45; margin: 0 !important; }
 /* 조리순서 단계 텍스트 양옆의 이전/다음 화살표(2026-08-21 요청) - 화살표는 각자 칸
    가장자리에 붙어있고 가운데 텍스트 칸만 늘어나면 되므로(2개 아이콘이 서로 벌어지는
    my_recipe_actions_ 문제와 달리 여기선 오히려 벌어지는 게 의도된 배치), st.columns를
    그대로 써도 된다. */
+[class*="st-key-cs_step_card"] div[data-testid="stHorizontalBlock"] { margin-top: 18px; }
 [class*="st-key-cs_prev_arrow"] button, [class*="st-key-cs_next_arrow"] button {
   background: var(--surface-alt); border: 1px solid var(--border); color: var(--accent);
   /* use_container_width=True가 버튼을 칸 전체 너비로 늘리는데, 아이콘 하나만 들어있어서
@@ -343,8 +350,8 @@ div.stButton > button[kind="primary"]:hover { background: var(--accent-dark); bo
   width:38px; height:38px; min-width:38px; border-radius:50%;
   background: var(--accent-soft); color: var(--accent); display:grid; place-items:center;
 }
-.ce-wave { flex:1; display:flex; align-items:center; gap:3px; height:26px; overflow:hidden; }
-.ce-wave span { flex:1 1 0; min-width:0; border-radius:2px; background: var(--accent); opacity:.85; }
+.ce-wave { flex:1; display:flex; align-items:center; gap:1.5px; height:26px; overflow:hidden; }
+.ce-wave span { flex:1 1 0; min-width:0; border-radius:1px; background: var(--accent); opacity:.85; }
 
 .ce-mic-bar {
   display:flex; align-items:center; gap:14px; background: var(--surface);
@@ -792,8 +799,8 @@ _AUDIO_PLAYER_TEMPLATE = Template("""
       font-family: "Pretendard", -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
   .player { display:flex; align-items:center; gap:14px; background:#fbf6ec;
     border-radius:999px; padding:10px 16px; }
-  .wave { flex:1; display:flex; align-items:center; gap:3px; height:26px; overflow:hidden; }
-  .wave span { flex:1 1 0; min-width:0; border-radius:2px; background:#ee7b36; opacity:.4;
+  .wave { flex:1; display:flex; align-items:center; gap:1.5px; height:26px; overflow:hidden; }
+  .wave span { flex:1 1 0; min-width:0; border-radius:1px; background:#ee7b36; opacity:.4;
     align-self:center; transition: opacity .1s linear; }
   .wave span.played { opacity:1; }
 </style>
@@ -828,12 +835,17 @@ _AUDIO_PLAYER_TEMPLATE = Template("""
 """)
 
 
-def _compute_wave_bars(audio_path: str | Path, num_bars: int = 20, min_h: int = 4, max_h: int = 28) -> list[int]:
+def _compute_wave_bars(audio_path: str | Path, num_bars: int = 60, min_h: int = 4, max_h: int = 28) -> list[int]:
     """실제 wav 파형을 num_bars개 구간으로 나눠 구간별 RMS 진폭을 막대 높이(px)로 바꾼다.
 
     기존 _WAVE_HEIGHTS는 모든 문장에 똑같이 재사용되는 가짜(장식용) 값이었다 — 이 함수는
     합성된 wav를 실제로 읽어서, 조용한 구간은 낮게 시끄러운(강세가 있는) 구간은 높게
     나오도록 진짜 파형 모양을 만든다(2026-08-19, 사용자 요청).
+
+    num_bars: 막대 폭은 CSS(_AUDIO_PLAYER_TEMPLATE의 .wave span, flex:1 1 0)가 재생바
+    전체 너비를 이 개수만큼 나눠 정하므로, 개수를 늘리면 그만큼 막대 하나하나가 가늘어진다
+    (2026-08-22 요청 — 막대가 두꺼운 블록처럼 보이지 말고 더 촘촘한 파형처럼 보이게, 20 ->
+    60으로 늘림).
     """
     data, _ = sf.read(str(audio_path), dtype="float32", always_2d=False)
     if data.ndim > 1:
