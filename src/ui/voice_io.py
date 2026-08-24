@@ -12,9 +12,34 @@ import numpy as np
 import soundfile as sf
 import streamlit as st
 
+from orchestration.inference_backend import (
+    backend_configured,
+    stt_transcribe_remote,
+    tts_synthesize_remote,
+)
 from theme import render_audio_autoplay, render_audio_player
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _stt_transcribe(audio: np.ndarray, sample_rate: int) -> str:
+    """`stt.infer.stt_transcribe`를 직접 부르는 대신 이 얇은 래퍼를 거친다 — 2026-08-24
+    프론트/백엔드 분리 결정으로, HF_BACKEND_SPACE가 설정돼 있으면(Streamlit Cloud 배포)
+    원격 호출하고, 없으면(로컬 전체 스택 개발 환경) 기존처럼 로컬에서 직접 로드해 쓴다."""
+    if backend_configured():
+        return stt_transcribe_remote(audio, sample_rate)
+    from stt.infer import stt_transcribe  # 지연 import — 로컬 전체 스택 환경에서만 필요
+
+    return stt_transcribe(audio, sample_rate=sample_rate)
+
+
+def _tts_synthesize(text: str) -> tuple[np.ndarray, int]:
+    """`_stt_transcribe`와 같은 이유의 로컬/원격 분기 — TTS 버전."""
+    if backend_configured():
+        return tts_synthesize_remote(text)
+    from tts.infer import tts_synthesize  # 지연 import — 로컬 전체 스택 환경에서만 필요
+
+    return tts_synthesize(text)
 
 # 2026-08-21: st.audio()는 Streamlit이 rerun마다 <audio> 태그를 새로 만드는 방식이라
 # 자동재생은 물론 수동 재생 버튼도 안 먹히는 문제가 실측으로 확인됐다(브라우저에서 재생
@@ -113,9 +138,7 @@ def speak(
                 # True가 될 수 있어, 락 안에서 한 번 더 확인해 중복 합성을 피한다.
                 with _TTS_LOCK:
                     if not audio_path.exists():
-                        from tts.infer import tts_synthesize
-
-                        waveform, sample_rate = tts_synthesize(message)
+                        waveform, sample_rate = _tts_synthesize(message)
                         audio_path.parent.mkdir(parents=True, exist_ok=True)
                         sf.write(audio_path, waveform, sample_rate)
 
@@ -139,9 +162,7 @@ def _synthesize_and_cache(text: str, audio_path: Path) -> None:
         with _TTS_LOCK:
             if audio_path.exists():
                 return
-            from tts.infer import tts_synthesize
-
-            waveform, sample_rate = tts_synthesize(text)
+            waveform, sample_rate = _tts_synthesize(text)
             audio_path.parent.mkdir(parents=True, exist_ok=True)
             sf.write(audio_path, waveform, sample_rate)
     except Exception:  # noqa: BLE001 — 프리페치 실패는 speak()가 다시 시도하므로 조용히 넘어감
@@ -209,9 +230,7 @@ def listen(key_prefix: str, *, show_mic: bool = True) -> str | None:
         data, sample_rate = sf.read(io.BytesIO(audio_file.getvalue()))
         if data.ndim > 1:  # 스테레오면 모노로
             data = data.mean(axis=1)
-        from stt.infer import stt_transcribe
-
-        text = stt_transcribe(data.astype(np.float32), sample_rate=sample_rate)
+        text = _stt_transcribe(data.astype(np.float32), sample_rate)
         if not text:
             st.info("잘 못 들었어요. 다시 말씀해주시거나 아래에 텍스트로 입력해주세요.")
             return None
@@ -223,3 +242,95 @@ def listen(key_prefix: str, *, show_mic: bool = True) -> str | None:
         return typed.strip()
 
     return None
+
+
+def listen_realtime(key_prefix: str, on_utterance) -> None:
+    """상시 마이크(WebRTC 실시간) — 2026-08-24 추가, `listen()`의 클릭-녹음-전송 방식과
+    달리 마이크를 켜두면 계속 듣고 있다가 말이 끝날 때마다 자동으로 인식한다.
+
+    `ui/streamlit_screens/stt_tts_test.py`의 실험적 `_render_always_on_mic()` 패턴을
+    프로덕션으로 옮긴 것(2026-08-24 요청) — STT 호출만 `_stt_transcribe()`(로컬/원격
+    분기)로 바꿨다. `on_utterance(text)` 콜백으로 인식된 발화를 넘긴다 — 이 모듈이
+    `ui.dispatch`를 직접 import하면 dispatch.py가 이미 `ui.voice_io.speak`를 가져다 쓰는
+    구조라 순환 import가 생겨서(ui/README.md의 계층 방향 참고), 호출부(화면)가
+    `dispatch.process_utterance`를 직접 넘겨주는 방식으로 피했다.
+
+    streamlit-webrtc 표준 실시간 처리 패턴 그대로 — webrtc가 재생 중인 동안 이 함수
+    안에서 while 루프를 돌며 프레임을 계속 받는다. 이 루프가 도는 동안은 이 함수를
+    호출한 화면의 나머지 렌더링이 멈춰 있으므로, 상태 표시(듣는 중/인식 중)를 이 함수
+    안에서 st.empty() 플레이스홀더로 직접 그린다. 마이크를 끄면 루프가 끝나고 화면
+    나머지가 정상적으로 계속 그려진다.
+
+    ⚠️ 원격 백엔드(HF Spaces)를 쓸 때는 발화 하나마다 오디오를 업로드해 왕복하므로,
+    로컬 직접 호출보다 지연이 클 수 있다 — 아직 실측 못 했음, Space 배포 후 확인 필요.
+    """
+    from streamlit_webrtc import WebRtcMode, webrtc_streamer
+
+    webrtc_ctx = webrtc_streamer(
+        key=f"{key_prefix}_realtime_mic",
+        mode=WebRtcMode.SENDONLY,
+        audio_receiver_size=256,
+        media_stream_constraints={"video": False, "audio": True},
+        rtc_configuration=_ice_servers(),
+    )
+
+    status_ph = st.empty()
+
+    if not webrtc_ctx.state.playing:
+        status_ph.caption("상시 마이크가 꺼져 있어요. 위 Start를 눌러 켜주세요.")
+        return
+
+    segmenter_key = f"{key_prefix}_mic_segmenter"
+    if segmenter_key not in st.session_state:
+        from mic_vad import MicVadSegmenter  # ui/ 최상위 폴더(theme.py와 같은 위치) 모듈
+
+        st.session_state[segmenter_key] = MicVadSegmenter()
+    segmenter = st.session_state[segmenter_key]
+
+    import queue
+
+    status_ph.info("🎙️ 듣고 있어요...")
+    while webrtc_ctx.state.playing:
+        if webrtc_ctx.audio_receiver is None:
+            break
+        try:
+            audio_frames = webrtc_ctx.audio_receiver.get_frames(timeout=1)
+        except queue.Empty:
+            continue
+
+        for frame in audio_frames:
+            utterance_audio = segmenter.feed(frame.to_ndarray(), frame.sample_rate)
+            if utterance_audio is None:
+                continue
+
+            status_ph.info("🧠 인식 중...")
+            text = _stt_transcribe(utterance_audio, 16000)
+            if text.strip():
+                on_utterance(text)
+            status_ph.info("🎙️ 듣고 있어요...")
+
+    status_ph.caption("상시 마이크가 꺼졌어요.")
+
+
+def _ice_servers() -> dict:
+    """TURN 서버 설정 — 2026-08-24 기준 실제 TURN 발급(Metered.ca 가입 등)은 아직 보류
+    (팀 결정, HF Spaces T4 배포 작업 논의 당시 미룸). 코드는 .env의 TURN_HOST/
+    TURN_USERNAME/TURN_PASSWORD/TURN_PORT가 있으면 자동으로 읽어 구글 공개 STUN에
+    더해 쓰도록 미리 만들어뒀다 — TURN_HOST가 비어있으면(지금 기본 상태) STUN만
+    쓴다. 나중에 Metered.ca 등에서 값을 받으면 .env/Space secret에 채우기만 하면
+    되고, 이 함수는 손댈 필요 없다. Streamlit Cloud처럼 인바운드 UDP를 넓게 못 여는
+    호스트에서는 STUN만으로 연결 안 되는 클라이언트가 있을 수 있다(발신자가 대칭형
+    NAT 뒤에 있는 경우 등) — 실제로 그런 사례가 확인되면 그때 TURN을 발급받아 채운다."""
+    import os
+
+    servers = [{"urls": ["stun:stun.l.google.com:19302"]}]
+    turn_host = os.environ.get("TURN_HOST")
+    if turn_host:
+        servers.append(
+            {
+                "urls": [f"turn:{turn_host}:{os.environ.get('TURN_PORT', '3478')}"],
+                "username": os.environ.get("TURN_USERNAME", ""),
+                "credential": os.environ.get("TURN_PASSWORD", ""),
+            }
+        )
+    return {"iceServers": servers}

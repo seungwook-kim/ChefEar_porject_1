@@ -19,7 +19,14 @@ from theme import (
 from ui.dispatch import COOKING_COMPLETE_MESSAGE, fallback_buttons, process_utterance
 from ui.recipe_view import _ingredients_to_chips, refresh_recipe_view
 from ui.session import _DEFAULT_PIPELINE_SESSION, goto
-from ui.voice_io import _AUDIO_DIR, _render_cached_speech, listen, prefetch_next_step_audio, speak
+from ui.voice_io import (
+    _AUDIO_DIR,
+    _render_cached_speech,
+    listen,
+    listen_realtime,
+    prefetch_next_step_audio,
+    speak,
+)
 
 
 def screen_start() -> None:
@@ -40,6 +47,13 @@ def screen_start() -> None:
     text = listen("start", show_mic=False)
     if text:
         process_utterance(text)
+
+    # 2026-08-24 요청 — "실시간 마이크가 되는가"가 최우선 확인 항목이라, 클릭-녹음-전송
+    # 방식(render_big_mic()/listen())과 별개로 상시 마이크(WebRTC) 옵션을 여기 추가한다.
+    # 접어둔 상태로 시작해서 기존 화면 UX(원형 마이크 버튼)를 가리지 않게 한다.
+    with st.expander("🎙️ 상시 마이크로 말하기 (실시간, 실험적)", expanded=False):
+        st.caption("켜두면 계속 듣고 있다가, 말이 끝나면 자동으로 인식해요.")
+        listen_realtime("start", process_utterance)
 
     # 2026-08-21: 위쪽에만 render_spacer()가 있고 아래쪽엔 없어서, block-container의
     # flex:1 남는 공간이 전부 위에만 쌓여 콘텐츠가 화면 아래쪽으로 밀렸다 - 뷰포트가

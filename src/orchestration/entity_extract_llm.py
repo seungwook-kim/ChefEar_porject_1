@@ -1,17 +1,22 @@
-"""자유발화에서 요리명을 뽑는 로컬 LLM 기반 경로 — `entity_extract.py`(정규식)와 별개.
+"""자유발화에서 요리명을 뽑는 LLM 기반 경로 — `entity_extract.py`(정규식)와 별개.
 
 `entity_extract.py`의 `extract_dish_name()`은 고정 접미사를 `rstrip`으로 잘라내는
 방식이라 "위 문형 밖의 표현은 놓칠 수 있다"는 v1 한계가 파일 자체에 명시돼 있다
-(`entity_extract.py:14`). 이 파일은 그 한계를 로컬 LLM(GPU 데스크탑에 직접 로드한
-EXAONE-3.5-2.4B-Instruct, `llm/infer.py`)으로 보완한다. `entity_extract.py` 자체는
-건드리지 않는다 — `app.py`의 호출 지점만 이 함수로 바꿔서 실제 서비스 흐름에 연결한다
+(`entity_extract.py:14`). 이 파일은 그 한계를 LLM(EXAONE-3.5-2.4B-Instruct,
+`llm/infer.py`)으로 보완한다. `entity_extract.py` 자체는 건드리지 않는다 —
+`app.py`의 호출 지점만 이 함수로 바꿔서 실제 서비스 흐름에 연결한다
 (`docs/specs/llm_dish_name_extract.md` 참고).
+
+2026-08-24 프론트/백엔드 분리 결정(docs/decisions.md #2) — `llm/infer.py`는 이제 이
+프로세스가 아니라 HF Spaces 유료 GPU 백엔드(`hf_backend/`)에서 돈다. `HF_BACKEND_SPACE`가
+설정돼 있으면 `orchestration.inference_backend`로 원격 호출하고, 없으면(로컬 전체
+스택 개발 환경) 기존처럼 `llm.infer`를 직접 로드해서 쓴다.
 """
 from __future__ import annotations
 
 import re
 
-from llm.infer import generate_json
+from orchestration.inference_backend import backend_configured, generate_json_remote
 
 # few-shot 두 개(요리명 있음/없음)로 출력 형식을 고정한다 — 모델이 JSON 밖에 다른 말을
 #덧붙이면 client.py의 json.loads()가 실패해서 안전하게 None으로 처리된다(EC-03).
@@ -70,7 +75,13 @@ def extract_dish_name_llm(utterance: str) -> str | None:
         return None
 
     utterance_for_llm = re.sub(r"\s+", "", utterance)
-    result = generate_json(_PROMPT_TEMPLATE.format(utterance=utterance_for_llm))
+    prompt = _PROMPT_TEMPLATE.format(utterance=utterance_for_llm)
+    if backend_configured():
+        result = generate_json_remote(prompt)
+    else:
+        from llm.infer import generate_json  # 지연 import — 로컬 전체 스택 환경에서만 필요
+
+        result = generate_json(prompt)
     if not result:
         return None
 

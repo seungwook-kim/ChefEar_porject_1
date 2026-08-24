@@ -10,15 +10,33 @@
 - 비고: Colab A100에서 QLoRA로 checkpoint-epoch-8까지 완주, merge 후 HF Hub(`kimseunguk/qwen3-tts-kss-finetuned`) 업로드 완료
 
 ## 2. Qwen3-TTS 추론 배포 방식 — CPU(HF Spaces Basic) → **GPU 기반으로 방향 전환**
-- 상태: **배포 방향 결정됨(2026-08-19)** — CPU는 목표(5초) 안에 못 들어와서 포기, 전부 GPU 기반으로 간다
+- 상태: **아키텍처 재확정(2026-08-24, 같은 날 두 번째 변경)** — 프론트(Streamlit
+  Community Cloud)/백엔드(HF Spaces 유료 T4) 분리 구조로 최종 확정
 - 담당: 홍민하 / 김승욱
-- 비고: **1차 방안: Tailscale + 로컬 데스크탑(RTX 5070) 상시 노출로 확정.** 2차/대안 방안으로
-  HF Spaces 배포 + 유료 GPU API 호출도 검토됐으나 1차는 아니고 백업. ⚠️ `AGENTS.md`
-  "기술 스택" 절에는 아직 `Hugging Face Spaces(CPU Basic, 무료)`가 배포 대상으로 명시돼
-  있어 이 결정과 어긋난다 — `AGENTS.md`가 지도 강사 가이드 요건과 연결된 문서라 CPU Basic
-  무료 배포가 단순 기술 선택이 아니라 과제 요건일 수도 있음, `AGENTS.md`/팀 가이드 문서도
-  같이 갱신할지 팀 확인 필요.
-  아래는 GPU 전환 결정 전까지 쌓인 CPU/GPU 실측 이력(참고용으로 남김):
+- 비고: **[2026-08-24 오전] 팀 승인으로 HF Spaces 유료 GPU(T4)가 1차 방안으로
+  재확정됨** — 2026-08-19 결정 당시 1차였던 "Tailscale + 로컬 데스크탑(RTX 5070) 상시
+  노출"은 백업으로 내려감. 이 시점엔 "HF Spaces 하나에 Streamlit + STT/TTS/LLM 전부
+  올리는 모놀리식" 구조를 가정하고 있었음.
+
+  **[2026-08-24 오후] Streamlit Community Cloud 배포 시도 중 구조를 다시 바꿈** —
+  실제로 Streamlit Community Cloud(무료, GPU 없음)에 이 저장소를 붙여 스모크테스트하다
+  `soundfile` 등 의존성 문제를 겪은 걸 계기로, 오전에 정했던 "모놀리식" 대신
+  **프론트/백엔드 분리** 구조로 최종 확정:
+  - **프론트**: Streamlit Community Cloud(무료, GPU 없음) — UI 전체 + 실시간 마이크
+    (WebRTC, `src/ui/voice_io.py`의 `listen_realtime()`)를 여기서 처리. 레포 루트
+    `requirements.txt`가 이 프론트용(가벼움, torch/qwen-tts 없음).
+  - **백엔드**: HF Spaces 유료 GPU(T4), Gradio SDK(`hf_backend/app.py`) — STT/TTS/LLM
+    무거운 추론 전담, `gradio_client`로 원격 호출됨(`src/orchestration/inference_backend.py`).
+    `hf_backend/requirements.txt`가 이 백엔드용(무거움, torch/transformers/qwen-tts).
+  - 결제(Space Hardware를 T4로 전환)는 아직 안 함 — 코드/구조만 준비된 상태.
+  - ⚠️ `AGENTS.md` "기술 스택" 절엔 아직 `Hugging Face Spaces(CPU Basic, 무료)`가 배포
+    대상으로 명시돼 있어(그것도 지금은 이 분리 구조와 다시 어긋남) — `AGENTS.md`가 지도
+    강사 가이드 요건과 연결된 문서라 팀이 직접 확인 후 갱신할 것(자동으로 고치지 않음).
+  - T4에서만 확인 가능한 항목(bf16 지원 여부, VRAM 실측, 응답속도, `hf_backend/`
+    실제 왕복 동작)은 전부 미검증 — Space를 실제로 만들고 T4로 전환한 뒤 확인할 것.
+
+  아래는 2026-08-19 시점 1차였던 Tailscale 방안 결정 당시 근거로 쌓인 CPU/GPU 실측
+  이력(참고용으로 남김, 방향 자체는 위 2026-08-24 결정으로 대체됨):
   CPU: 2026-08-17 구 code path 197.48초 → 2026-08-19 공식 스크립트(`tests/tts_cpu_inference_test.py`)
   재측정 전체 평균 26.11초, `results/tts/cpu_inference_test.csv`. GPU(RTX 5070): 4문장
   (eager→SDPA→SDPA+compile 6.34→5.48→5.21초) 이후 문장이 5개(가장 긴 양념 문장 98자 추가)·

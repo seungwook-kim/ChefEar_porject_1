@@ -111,8 +111,12 @@ def load_tts_model():
 
 
     # 2026-08-19 팀 결정(docs/decisions.md #2): CPU(HF Spaces Basic)는 목표 응답시간(5초)을
-    # 못 맞춰 포기하고, 배포를 GPU 데스크탑(RTX 5070) 상시 노출(Tailscale)로 전환했다 —
-    # CPU 폴백은 더 이상 배포 대상이 아니라서 없애고 GPU를 필수로 요구한다.
+    # 못 맞춰 포기하고 GPU 배포로 전환했다(1차 방안은 이후 2026-08-24 HF Spaces 유료 T4로
+    # 재확정됨, Tailscale+로컬 데스크탑은 백업) — CPU 폴백은 더 이상 배포 대상이 아니라서
+    # 없애고 GPU를 필수로 요구한다.
+    # ⚠️ T4(Turing)는 아래 dtype=torch.bfloat16이 로컬 검증 GPU(RTX 5070, Blackwell)와
+    # 달리 bf16 텐서코어를 지원하지 않는 세대라 미검증 — Space를 T4로 전환한 뒤 실추론이
+    # 에러 없이 도는지 확인할 것, 에러 나면 이 줄만 torch.float16으로 바꾸면 된다.
     if not torch.cuda.is_available():
 
         raise RuntimeError(

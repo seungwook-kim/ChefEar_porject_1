@@ -1,0 +1,30 @@
+# hf_backend/app.py(Gradio API 서버)용 의존성 — HF Spaces 유료 GPU(T4) 백엔드 전용.
+# 레포 루트의 requirements.txt(Streamlit Cloud 프론트용, 가벼움)와는 역할이 다르다 —
+# 섞어 쓰지 않는다.
+#
+# torch 이외 버전은 로컬 RTX 5070(Blackwell, sm_120) venv(chefear-py313)에서 STT+LLM+TTS
+# 동시 로드+실추론까지 검증된 조합 그대로 고정(2026-08-24).
+#
+# ⚠️ torch만 CUDA 빌드를 T4용으로 다르게 잡음 — 로컬 검증은 cu130(Blackwell이라 최신
+# 빌드가 필요했음)이었지만, T4(Turing, sm_75)는 훨씬 오래된 아키텍처라 그 정도까지 필요
+# 없을 것으로 보고 torch==2.13.0이 배포된 CUDA 빌드 중 가장 오래된(=가장 보수적인) cu126을
+# 골랐다(cu121/cu124엔 이 torch 버전 빌드 자체가 더 이상 없음, 2026-08-24 PyTorch 휠
+# 인덱스 확인). run_local.sh에 기록된 실측(CUDA 13 전용 nvidia 라이브러리만 있을 때
+# faster-whisper/ctranslate2가 libcublas.so.12를 못 찾아 죽은 사례)도 cu130 대신 cu12x
+# 계열을 고르는 근거가 된다 — STT(faster-whisper)도 이 Space에서 GPU로 돈다.
+# ⚠️ 실제 T4에서 아직 검증 못 함 — Space 재빌드 후 CUDA/드라이버 불일치 에러(예: "no
+# kernel image is available") 나면 cu128/cu129/cu130 순으로 올려서 재시도할 것.
+--extra-index-url https://download.pytorch.org/whl/cu126
+torch==2.13.0
+transformers==4.57.3
+accelerate==1.12.0
+peft==0.20.0
+bitsandbytes==0.50.0
+tokenizers==0.22.2
+qwen-tts==0.1.1
+huggingface_hub==0.36.2
+faster-whisper==1.2.1
+soundfile==0.14.0
+
+# Gradio API 서버 자체
+gradio==6.25.0

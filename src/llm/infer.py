@@ -6,12 +6,24 @@ LGAI-EXAONE/EXAONE-3.5-2.4B-Instruct — LG AI Research, 온디바이스/경량 
 (`docs/specs/llm_dish_name_extract.md` 참고).
 
 [배포 방식]
-GPU 데스크탑(RTX 5070)에서 `transformers.AutoModelForCausalLM`으로 이 프로세스 안에
-직접 로드한다 — 별도 서버(Ollama/FastAPI 등)를 두지 않는다. AGENTS.md의 "외부 LLM API
-호출 금지"(1.5 원칙)는 OpenAI/Anthropic/Gemini/Groq/OpenRouter처럼 인터넷 건너 남의
-서버로 텍스트를 보내는 걸 막는 규칙이다 — 오픈라우터도 API 키로 호출하는 이상 실제
-추론이 오픈라우터 서버에서 일어나므로 이 원칙에 걸린다(그래서 배제함). 여기서는 팀
-GPU 데스크탑에 가중치를 직접 올려서 돌리므로 완전한 로컬이라 원칙에 걸리지 않는다.
+이 파일 자체는 `transformers.AutoModelForCausalLM`으로 가중치를 직접 로드하는 코드다 —
+별도 상용 API 서버(Ollama/OpenAI 호환 서버 등)를 두지 않는다. 이 파일이 실제로 어느
+프로세스에서 도는지는 배포 구조에 따라 다르다(2026-08-24, 같은 날 두 번 바뀜—
+`docs/decisions.md` #2 참고):
+- **로컬 개발/검증**: 팀 GPU 데스크탑(RTX 5070)에서 Streamlit 프로세스 안에 직접 로드.
+- **배포(현재 확정)**: 프론트(Streamlit Community Cloud, GPU 없음)/백엔드(HF Spaces
+  유료 GPU T4) 분리 — 이 파일은 프론트가 아니라 `hf_backend/app.py`(Gradio API 서버)
+  프로세스 안에서 로드되고, 프론트는 `src/orchestration/inference_backend.py`를 통해
+  네트워크로 그 결과만 받는다. 이 파일의 로직 자체는 어느 경우든 동일 — 호출 위치만
+  달라진다.
+
+AGENTS.md의 "외부 LLM API 호출 금지"(1.5 원칙)는 OpenAI/Anthropic/Gemini/Groq/
+OpenRouter처럼 인터넷 건너 남의(제3자) 서버로 텍스트를 보내는 걸 막는 규칙이다 —
+오픈라우터도 API 키로 호출하는 이상 실제 추론이 오픈라우터 서버에서 일어나므로 이
+원칙에 걸린다(그래서 배제함). 여기서는 팀이 직접 만든 HF Space(`hf_backend/`)나 팀
+GPU 데스크탑에 이 파일이 가중치를 직접 올려서 돌리는 것이라, 프론트-백엔드 사이에
+네트워크 호출이 있어도 제3자 LLM API가 아니라 팀 소유 인프라의 원격 호출이라 이
+원칙에 걸리지 않는다(같은 논리가 `docs/decisions.md` #2에도 남아있음).
 
 이 저장소에 이미 고정된 `transformers==4.57.3`(requirements-main.txt/requirements-stt.txt,
 Whisper 학습용으로 확정된 버전)을 그대로 재사용한다 — 새 의존성 추가 없음.

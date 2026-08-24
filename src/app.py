@@ -94,25 +94,43 @@ def _warm_up_models() -> None:
     이미 따르는 EC-05 원칙(화면 텍스트는 항상 남고, 음성 관련 실패만 사용자에게 알림)과
     똑같이 각 모델 로딩을 개별로 감싸서, 준비 안 된 모델이 있어도 앱은 계속 뜨고 나머지
     기능(텍스트 입력 흐름 등)은 그대로 쓸 수 있게 한다.
+
+    2026-08-24 프론트/백엔드 분리 결정(docs/decisions.md #2) — HF_BACKEND_SPACE가
+    설정돼 있으면(Streamlit Cloud 배포) STT/LLM/TTS는 이 프로세스가 아니라 원격 HF
+    Spaces GPU 백엔드에서 돌므로 여기서 워밍업할 게 없다(그냥 반환). 설정 안 돼 있으면
+    (로컬 전체 스택 개발 환경) 기존처럼 세 모델을 이 프로세스에 직접 로드한다.
+
+    ⚠️ 로컬 전체 스택 경로에서도 `from llm.infer import load_llm` 등 import 자체가
+    실패할 수 있다(torch/transformers가 없는 환경, 예: requirements.txt만 깐 상태로
+    실수로 이 분기를 타는 경우) — 그래서 각 import를 자기 try 블록 안으로 옮겨서,
+    "모델 로딩 실패"뿐 아니라 "모듈 import 실패"까지 같은 EC-05 경로로 잡는다(이전엔
+    import 세 줄이 try 밖에 있어서 이 경우 앱이 그대로 죽었었다).
     """
-    from llm.infer import load_llm
-    from stt.infer import load_ct2_model
-    from tts.infer import load_tts_model
+    from orchestration.inference_backend import backend_configured
+
+    if backend_configured():
+        return
 
     with st.spinner("STT 모델 준비 중... (최초 1회만, 몇 초 걸릴 수 있음)"):
         try:
+            from stt.infer import load_ct2_model
+
             load_ct2_model()
         except Exception as exc:  # noqa: BLE001 — EC-05, 화면은 계속 뜨게 함
             st.warning(f"STT 모델을 준비하지 못했어요(음성 인식이 안 될 수 있어요, 텍스트 입력은 계속 됩니다): {exc}")
 
     with st.spinner("LLM(EXAONE) 모델 준비 중... (최초 1회는 다운로드로 몇 분 걸릴 수 있음)"):
         try:
+            from llm.infer import load_llm
+
             load_llm()
         except Exception as exc:  # noqa: BLE001
             st.warning(f"LLM 모델을 준비하지 못했어요(요리명 추출이 안 될 수 있어요): {exc}")
 
     with st.spinner("TTS(Qwen3-TTS) 모델 준비 중... (약 17초, 최초 1회만)"):
         try:
+            from tts.infer import load_tts_model
+
             load_tts_model()
         except Exception as exc:  # noqa: BLE001
             st.warning(f"TTS 모델을 준비하지 못했어요(음성 응답이 안 나올 수 있어요, 텍스트는 계속 표시돼요): {exc}")
