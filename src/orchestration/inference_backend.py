@@ -76,12 +76,23 @@ def stt_transcribe_remote(audio: np.ndarray, sample_rate: int) -> str:
 
     gr.Audio(type="filepath") 입력이라 파일로 먼저 써야 한다(원시 배열을 JSON으로
     직렬화해서 보내는 것보다 gradio_client 표준 패턴 — 업로드가 훨씬 효율적).
+
+    2026-08-24 실제 배포에서 확인된 버그 — 로컬 파일 경로 문자열을 그대로 넘기면
+    hf_backend(gradio==5.49.0/gradio_client==2.6.0) 쪽에서
+    `pydantic_core.ValidationError: ... The 'meta' field must be explicitly provided`로
+    죽는다(HF Space 서버 로그로 실제 트레이스백 확인, gradio_client 쪽은 `AppError`
+    (show_error=False라 원인 안 보임)로만 받음). 이 gradio_client 버전은 파일 입력을
+    `{'path': ..., 'meta': {'_type': 'gradio.FileData'}}`로 명시적으로 감싸서 보내야
+    받아주는데, 그냥 경로 문자열만 넘기던 옛날 방식(더 낮은 gradio_client 버전 기준
+    예제/짐작으로 작성)을 그대로 썼던 실수 — `handle_file()`로 감싸면 해결된다.
     """
+    from gradio_client import handle_file  # 지연 import — _get_client()와 같은 이유
+
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         tmp_path = tmp.name
     try:
         sf.write(tmp_path, audio, sample_rate)
-        result = _get_client().predict(tmp_path, api_name="/stt_transcribe")
+        result = _get_client().predict(handle_file(tmp_path), api_name="/stt_transcribe")
         return result or ""
     finally:
         Path(tmp_path).unlink(missing_ok=True)
