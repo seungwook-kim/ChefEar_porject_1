@@ -4,7 +4,14 @@ emoji: 🧠
 colorFrom: purple
 colorTo: blue
 sdk: gradio
-sdk_version: "6.25.0"
+# ⚠️ 6.25.0으로 시작했다가 실제 빌드에서 huggingface-hub 버전 충돌로 두 번 실패함
+# (2026-08-24 실측) — gradio가 이 sdk_version 값 그대로 강제로 같이 깔리는데(레포
+# requirements.txt와 별개로), gradio>=6.0은 huggingface-hub>=1.16.0을 요구해서
+# transformers==4.57.3(huggingface-hub<1.0 요구, qwen-tts==0.1.1이 이 버전을 강제)과
+# 근본적으로 양립 불가. gradio 5.49.0은 huggingface-hub<2.0,>=0.33.5라 두 요구사항
+# 교집합([0.34.0, 1.0))에 들어가서 고름 — transformers 버전(팀 검증 완료 조합)은
+# 안 건드리는 쪽으로 해결.
+sdk_version: "5.49.0"
 app_file: app.py
 pinned: false
 ---

@@ -63,7 +63,10 @@ def _get_client():
             )
         from gradio_client import Client  # 지연 import — 이 함수가 실제로 불릴 때만 필요
 
-        _client = Client(BACKEND_SPACE, hf_token=_TOKEN)
+        # ⚠️ hf_token= 이 아니라 token= 이다(2026-08-24 실제 Space에 대고 테스트하다
+        # TypeError: got an unexpected keyword argument 'hf_token'으로 확인 — gradio_client
+        # API를 정확히 안 보고 짐작으로 썼던 실수).
+        _client = Client(BACKEND_SPACE, token=_TOKEN)
     return _client
 
 

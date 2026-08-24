@@ -44,7 +44,20 @@ import numpy as np
 import soundfile as sf
 
 BACKEND_ROOT = Path(__file__).resolve().parent
-PROJECT_ROOT = BACKEND_ROOT.parent
+# 배치 구조가 두 가지라 어느 쪽이든 맞게 판단한다(2026-08-24 실제 배포에서
+# ModuleNotFoundError: orchestration로 확인된 문제 — 처음엔 "로컬에서 hf_backend/ 밑에
+# 중첩, src/는 그 위 폴더의 형제"만 가정했었다):
+#   1) 로컬 개발(`python hf_backend/app.py`, hf_backend/README.md 안내대로): 이 파일이
+#      <레포 루트>/hf_backend/app.py에 있고, src/는 <레포 루트>/src — 즉 이 파일의
+#      부모의 부모.
+#   2) 실제 HF Space 배포: Space 저장소 루트에 이 파일을 app.py로 올리고(중첩 없이
+#      평탄화), src/ 폴더도 그 루트에 형제로 같이 올린다(hf_backend/README.md 배포
+#      방법 참고) — 이 경우 src/는 이 파일의 바로 부모.
+# (BACKEND_ROOT / "src")가 있으면 2)번 배치, 없으면 1)번 배치로 판단한다.
+if (BACKEND_ROOT / "src").is_dir():
+    PROJECT_ROOT = BACKEND_ROOT
+else:
+    PROJECT_ROOT = BACKEND_ROOT.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from orchestration.db import load_env  # noqa: E402

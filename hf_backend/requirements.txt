@@ -22,9 +22,28 @@ peft==0.20.0
 bitsandbytes==0.50.0
 tokenizers==0.22.2
 qwen-tts==0.1.1
-huggingface_hub==0.36.2
+# ⚠️ huggingface_hub 버전 문제로 세 번 실패해서(2026-08-24 실측) 아예 핀을 없앴다:
+# 1차) ==0.36.2로 고정 -> gradio(당시 6.25.0, sdk_version 강제 설치)가 >=1.16.0 요구해서 충돌.
+# 2차) 그 자리에 >=1.16.0,<2.0으로 다시 고정 -> 이번엔 내가 넣은 그 핀 자체가
+#      transformers==4.57.3(huggingface-hub<1.0 요구, qwen-tts==0.1.1이 강제하는 버전이라
+#      안 바꿈)과 충돌 — gradio를 5.49.0으로 낮춰(huggingface-hub<2.0,>=0.33.5) transformers
+#      쪽과 교집합([0.34.0, 1.0))이 생기게 했는데도, 내가 남겨둔 이 핀이 그 교집합 중
+#      1.0 미만을 다시 다 막아버려서 여전히 실패.
+# 3차) 그래서 아예 핀을 없앰 — gradio 5.49.0과 transformers 4.57.3 둘의 자체 요구사항만으로
+#      pip가 알아서 [0.34.0, 1.0) 안에서 고르게 둔다.
 faster-whisper==1.2.1
 soundfile==0.14.0
+# src/stt/infer.py가 최상단에서 이 셋을 import한다(jiwer는 WER/CER 평가용 함수 때문에,
+# librosa/pandas는 데이터 처리용) — 로컬 전체 스택 venv엔 다른 패키지가 끌고 들어와서
+# 안 보였는데, 이 Space 환경에선 ModuleNotFoundError: jiwer로 실제로 드러남(2026-08-24
+# 실측, T4에 대고 stt_transcribe 실제 호출해서 확인).
+# ⚠️ pandas==3.0.5(requirements-main.txt와 같은 버전)로 고정했다가 또 충돌 남 —
+# gradio==5.49.0이 pandas<3.0을 요구해서. 여기서도 버전을 안 맞춰보고 로컬 검증
+# 버전을 그대로 가져온 같은 유형의 실수 — 이번엔 아예 pin 없이 gradio 쪽 범위에 맡긴다.
+librosa==0.11.0
+pandas
+jiwer==4.0.0
 
-# Gradio API 서버 자체
-gradio==6.25.0
+# Gradio API 서버 자체 — 버전은 hf_backend/README.md의 sdk_version과 반드시 맞출 것
+# (Space가 그 값 기준으로 자동으로 gradio를 깔기 때문에 서로 다르면 또 충돌 위험).
+gradio==5.49.0
