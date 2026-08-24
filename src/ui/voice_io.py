@@ -56,6 +56,14 @@ if os.environ.get("WEBRTC_DEBUG"):
     logging.basicConfig(level=logging.DEBUG)
     logging.getLogger("aioice").setLevel(logging.DEBUG)
     logging.getLogger("aiortc").setLevel(logging.DEBUG)
+    # 2026-08-24 추가 — aiortc를 통째로 DEBUG로 켜면 ICE/DTLS 등 연결 진단에 필요한
+    # 로그와 함께, 프레임마다(초당 수십 개) 찍히는 RTP 패킷 단위 로그
+    # ("RTCRtpReceiver(audio) < RtpPacket(seq=..., ts=..., ...)")까지 같이 쏟아져서
+    # 다른 로그(MIC_DEBUG/UTTERANCE_DEBUG 등)를 콘솔에서 못 찾을 정도로 스팸이 됐다
+    # (실사용 리포트). 이 패킷 로그만 aiortc.rtcrtpreceiver 하위 로거에서 나오므로,
+    # 그 로거만 다시 올려서 조용히 시키고 나머지 aiortc/aioice 로그(연결 상태 변화,
+    # ICE 후보 등)는 그대로 DEBUG로 유지한다.
+    logging.getLogger("aiortc.rtcrtpreceiver").setLevel(logging.WARNING)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
