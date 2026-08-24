@@ -98,7 +98,8 @@ def _warm_up_models() -> None:
     2026-08-24 프론트/백엔드 분리 결정(docs/decisions.md #2) — HF_BACKEND_SPACE가
     설정돼 있으면(Streamlit Cloud 배포) STT/LLM/TTS는 이 프로세스가 아니라 원격 HF
     Spaces GPU 백엔드에서 돌므로 여기서 워밍업할 게 없다(그냥 반환). 설정 안 돼 있으면
-    (로컬 전체 스택 개발 환경) 기존처럼 세 모델을 이 프로세스에 직접 로드한다.
+    (로컬 전체 스택 개발 환경, 지금까지의 동작) 기존처럼 세 모델을 이 프로세스에 직접
+    로드한다.
 
     ⚠️ 로컬 전체 스택 경로에서도 `from llm.infer import load_llm` 등 import 자체가
     실패할 수 있다(torch/transformers가 없는 환경, 예: requirements.txt만 깐 상태로
@@ -139,6 +140,12 @@ def _warm_up_models() -> None:
 def main() -> None:
     st.set_page_config(page_title="ChefEar", page_icon="🍲", layout="centered", initial_sidebar_state="collapsed")
     init_state()
+    # voice_io.prefetch_remaining_steps_audio()의 백그라운드 스레드가 참조하는
+    # "지금 활성 레시피" 표시를 매 rerun마다 최신 상태로 맞춘다(2026-08-22 요청) — 사용자가
+    # 다른 레시피로 넘어가거나(재료대체 포함) 처음 화면으로 돌아가 pipeline_session이
+    # 리셋되면, 이 값도 즉시 바뀌어서 버려진 레시피의 백그라운드 합성이 다음 단계
+    # 진입 전에 스스로 멈춘다.
+    st.session_state._active_recipe_box["recipe_id"] = st.session_state.pipeline_session.get("current_recipe_id")
     # 새로고침해도 로그인이 풀리지 않게, 저장해둔 로그인 쿠키로 세션을 복원한다
     # (2026-08-22 요청) - _warm_up_models()보다 먼저 해야 화면이 뜨자마자 바로
     # 로그인 상태로 보인다.

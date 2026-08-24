@@ -22,12 +22,24 @@
   실제로 Streamlit Community Cloud(무료, GPU 없음)에 이 저장소를 붙여 스모크테스트하다
   `soundfile` 등 의존성 문제를 겪은 걸 계기로, 오전에 정했던 "모놀리식" 대신
   **프론트/백엔드 분리** 구조로 최종 확정:
-  - **프론트**: Streamlit Community Cloud(무료, GPU 없음) — UI 전체 + 실시간 마이크
-    (WebRTC, `src/ui/voice_io.py`의 `listen_realtime()`)를 여기서 처리. 레포 루트
+  - **프론트**: Streamlit Community Cloud(무료, GPU 없음) — UI 전체 + 상시 마이크
+    (WebRTC, `src/ui/voice_io.py`의 `_run_mic_loop()`/`listen()`)를 여기서 처리. 레포 루트
     `requirements.txt`가 이 프론트용(가벼움, torch/qwen-tts 없음).
   - **백엔드**: HF Spaces 유료 GPU(T4), Gradio SDK(`hf_backend/app.py`) — STT/TTS/LLM
     무거운 추론 전담, `gradio_client`로 원격 호출됨(`src/orchestration/inference_backend.py`).
     `hf_backend/requirements.txt`가 이 백엔드용(무거움, torch/transformers/qwen-tts).
+  - **[2026-08-24 밤] 화면/마이크 설계 자체를 자체 구현에서 이식으로 교체** — 처음엔
+    이 저장소에서 상시 마이크를 `ui/streamlit_screens/stt_tts_test.py`의 실험적 패턴을
+    참고해 간이로 새로 짰었는데(`listen_realtime()`, 화면마다 접힌 expander), 팀 원본
+    저장소(`aihuman-7th/proj1-a`)에 이미 2026-08-23~24에 실사용 검증까지 끝난 훨씬
+    성숙한 구현(연결 끊김 자동 복구, TTS 재생 중 마이크 음소거, 화면 전환에도 끊기지
+    않는 세션 전체 공유 연결 등)이 있는 걸 뒤늦게 확인 — 그 설계/화면을 그대로 파일
+    복사로 가져왔다(git 연동 없이 읽기 전용으로만 참고, 이 저장소엔 커밋만 함).
+    `src/ui/voice_io.py`·`dispatch.py`·`screens/cooking.py`·`screens/register.py`·
+    `session.py`·`ui/mic_vad.py`·`ui/theme.py` 등 화면/마이크 관련 파일 전부 그
+    시점의 `proj1-a` 버전으로 교체됨 — 간이 구현(`listen_realtime()`)은 삭제됨.
+    이 저장소가 담당하는 건 여전히 위 프론트/백엔드 분리(원격 추론 호출)뿐이고, 화면
+    디자인·마이크 안정성 로직은 팀 원본과 동일하게 유지하는 게 목표.
   - 결제(Space Hardware를 T4로 전환)는 아직 안 함 — 코드/구조만 준비된 상태.
   - ⚠️ `AGENTS.md` "기술 스택" 절엔 아직 `Hugging Face Spaces(CPU Basic, 무료)`가 배포
     대상으로 명시돼 있어(그것도 지금은 이 분리 구조와 다시 어긋남) — `AGENTS.md`가 지도
