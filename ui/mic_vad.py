@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections import deque
 
 import numpy as np
+import soxr
 
 
 class MicVadSegmenter:
@@ -97,7 +98,16 @@ class MicVadSegmenter:
         """
         mono_raw = self._to_mono_float32(samples, channels)
         self._raw_sample_rate = sample_rate
-        mono16k = self._resample(mono_raw, sample_rate, 16000)
+        # 2026-08-24 — 여기(VAD 판정용 16kHz 버퍼)만 _resample_vad_fast()를 쓴다. 이전엔
+        # 여기도 self._resample()(librosa)을 그대로 썼는데, 배포 로그의 "Queue overflow"
+        # (audio_receiver_size를 1024까지 늘려도 계속 넘침) 원인을 실측해보니 프레임(20ms)
+        # 마다 부르는 librosa.resample() 호출 자체가 18.5ms나 걸려서(soxr 백엔드를 쓰는데도
+        # 그 위를 감싸는 librosa의 매번-검증/설정 오버헤드 때문) 초당 50프레임 기준
+        # 리샘플링만으로 이미 실시간의 92%를 써버렸다 — VAD 추론은커녕 이 자리에서부터
+        # 실시간을 못 따라가는 구조였다. 발화 전체를 딱 한 번만 리샘플링하는 최종 STT
+        # 입력 경로(아래 "end" 분기의 self._resample() 호출, 이미 실사용 검증됨 — 안
+        # 건드림)는 호출 빈도가 낮아 문제없어서 그대로 librosa를 쓴다.
+        mono16k = self._resample_vad_fast(mono_raw, sample_rate, 16000)
 
         self._pending16k = np.concatenate([self._pending16k, mono16k])
         self._pending_raw = np.concatenate([self._pending_raw, mono_raw])
@@ -197,8 +207,23 @@ class MicVadSegmenter:
 
     @staticmethod
     def _resample(mono: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
+        """발화 전체를 딱 한 번만 리샘플링하는 최종 STT 입력 경로 전용(호출 빈도가
+        낮아 librosa의 호출당 오버헤드가 문제되지 않는다) — feed()의 "end" 분기 참고."""
         if orig_sr == target_sr:
             return mono
         import librosa
 
         return librosa.resample(mono, orig_sr=orig_sr, target_sr=target_sr)
+
+    @staticmethod
+    def _resample_vad_fast(mono: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
+        """VAD 판정용 프레임 단위 리샘플링 전용(feed() 맨 위 참고) — 정확도보다 호출당
+        오버헤드가 훨씬 중요하다(초당 ~50번 불림, "말하는지/조용한지" 에너지 패턴만
+        보면 되고 클래스 docstring에도 이미 "이 정도 잡음엔 안 민감함"이라고 돼있음).
+        soxr을 직접 불러서 quality="QQ"(가장 저품질·저오버헤드)로 쓴다 — librosa.resample()
+        도 내부적으론 soxr을 쓰지만 매 호출마다 감싸는 검증/설정 비용이 이만한 작은
+        조각(20ms)엔 안 맞는다(실측: 18.5ms vs 0.009ms, 2026-08-24, Queue overflow 원인).
+        """
+        if orig_sr == target_sr:
+            return mono
+        return soxr.resample(mono, orig_sr, target_sr, quality="QQ").astype(np.float32)

@@ -39,6 +39,18 @@ silero-vad==6.2.1
 # 로그로 ModuleNotFoundError 확인됨(2026-08-24). requirements-main.txt와 같은 버전으로
 # 고정(numba/scipy 등도 딸려오지만 전부 cp314 휠 있음, 2026-08-24 PyPI 확인).
 librosa==0.11.0
+# 2026-08-24 — 배포 로그로 "Queue overflow"(1024까지 늘려도 계속 넘침) 원인 실측 확인:
+# MicVadSegmenter.feed()가 VAD 판정용으로 프레임(20ms)마다 librosa.resample()을 부르는데,
+# 이 호출 자체가 프레임 하나당 18.5ms 걸린다(실측) — 초당 50프레임이면 리샘플링만으로
+# 이미 실시간의 92%를 써버려 실시간 처리가 구조적으로 불가능했다. librosa는 이미
+# soxr을 내부 백엔드로 쓰지만(설치돼 있으면 자동 선택) 매 호출마다 감싸는 검증/설정
+# 오버헤드가 이 정도 크기 조각엔 안 맞는다 — soxr을 직접 불러서 감싸는 오버헤드를
+# 없애면(quality="QQ", VAD는 에너지 패턴만 보면 돼서 저품질로 충분) 같은 호출이
+# 0.009ms로 끝난다(실측, 약 2000배). librosa는 발화 전체를 딱 한 번만 리샘플링하는
+# 최종 STT 입력 경로(이미 실사용 검증 완료, 안 건드림)엔 그대로 남겨뒀다 — 이 프레임
+# 단위 VAD 경로만 soxr 직접 호출로 바꿔서 librosa의 transitive 의존성이 아니라
+# 명시적으로 pin.
+soxr==1.1.0
 
 # --- HF Spaces 유료 GPU 백엔드 호출 클라이언트 ---
 gradio_client==2.6.0

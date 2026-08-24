@@ -21,6 +21,16 @@ from ui.recipe_view import _ingredients_to_chips, refresh_recipe_view
 from ui.session import get_owner_id, goto
 from ui.voice_io import _AUDIO_DIR, _render_cached_speech, listen, mic_is_playing, prefetch_remaining_steps_audio, speak
 
+# 2026-08-24 — screen_start()의 잡음 필터(아래 참고) 트리거 단어. "레시피"/"만드는" 단
+# 둘만으론 실사용 예상 문장 목록(팀 제공) 중 상당수를 놓쳤다 — "만들다"가 어미에 따라
+# 어간이 "만들-"/"만드-"로 바뀌는 불규칙(ㄹ탈락) 동사라 "만들어"/"만들려면"은 "만들"엔
+# 걸리지만 "만드는"/"만드나요"엔 안 걸리고, 그 반대도 마찬가지라 두 어간을 다 넣었다.
+# "조리법"/"방법"/"요리"/"시작"류(예: "조리법을 알려주시겠어요?", "요리 시작해줘")는
+# 아예 다른 단어라 별도로 추가. "어떻게 해?"/"~해줘"처럼 이 단어들이 하나도 없는 극히
+# 일반적인 표현도 있었지만, 그건 넣는 순간 이 필터의 원래 목적(잡음 오탐 억제)이
+# 무의미해질 만큼 흔한 말이라 의도적으로 뺐다(요청자 확인 완료).
+_RECIPE_REQUEST_WORDS = ("레시피", "만들", "만드", "방법", "조리", "요리", "시작")
+
 
 def screen_start() -> None:
     render_spacer()
@@ -62,11 +72,11 @@ def screen_start() -> None:
         # 가능성으로 보고 항상 신규 등록(register_intro) 화면으로 보내버린다(dispatch.py
         # intent == "미분류" 분기) — "말도 안 했는데 새 메뉴 등록 화면으로 간다"는 리포트로
         # 이어졌다. 이 화면에서만, 발화가 진짜 요리 요청일 가능성이 있을 때만 넘긴다 —
-        # "레시피"/"만드는" 중 하나가 들어있어야 통과(요청자 명시 지정). 트레이드오프:
-        # "된장찌개"처럼 이 두 단어 없이 요리명만 말한 정상 발화도 같이 걸러진다 — 잡음
+        # _RECIPE_REQUEST_WORDS(모듈 상단) 중 하나가 들어있어야 통과. 트레이드오프:
+        # "된장찌개"처럼 이 단어들 없이 요리명만 말한 정상 발화도 같이 걸러진다 — 잡음
         # 오탐이 더 잦은 문제라 판단해 감수. 안 걸리면 조용히 무시(다음 rerun까지 계속 듣기만
         # 함, chat_log에도 안 남음).
-        if "레시피" in text or "만드는" in text:
+        if any(word in text for word in _RECIPE_REQUEST_WORDS):
             process_utterance(text)
 
     # 2026-08-21: 위쪽에만 render_spacer()가 있고 아래쪽엔 없어서, block-container의

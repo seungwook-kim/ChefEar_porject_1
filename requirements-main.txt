@@ -17,6 +17,10 @@ python-dotenv==1.2.3
 jiwer==4.0.0
 soundfile==0.14.0
 librosa==0.11.0
+# ui/mic_vad.py의 VAD 판정 경로가 프레임 단위로 soxr을 직접 호출한다(requirements.txt와
+# 같은 이유 — librosa.resample() 호출 오버헤드가 20ms 프레임엔 너무 커서 실시간 처리가
+# 안 됨, 2026-08-24 실측).
+soxr==1.1.0
 pandas==3.0.5
 numpy==2.4.6
 tqdm==4.70.0
