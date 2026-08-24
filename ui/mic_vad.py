@@ -32,6 +32,13 @@ class MicVadSegmenter:
     # 실제 발화 시작 지점을 보존한다.
     PRE_ROLL_CHUNKS = 10
 
+    # 2026-08-24 추가 — 프레임 유실(WebRTC 큐 오버플로 등)로 오디오에 구간이 통째로
+    # 빠지면, silero-vad의 연속 스트림 전제가 깨져서 내부 상태(RNN 계열)가 "말하는
+    # 중"에서 영원히 "끝"을 못 찾는 사례가 실사용으로 확인됐다("한 번 저 경고 뜨면 그
+    # 뒤로 반응을 안 해준다" 리포트) — 이 값보다 오래 "발화 중" 상태가 안 풀리면
+    # feed()가 강제로 리셋한다(정상적인 사람의 한 발화가 이보다 길 일은 거의 없음).
+    MAX_SPEECH_SECONDS = 15
+
     def __init__(self, min_silence_duration_ms: int = 600, threshold: float = 0.5):
         from silero_vad import VADIterator, load_silero_vad
 
@@ -74,6 +81,7 @@ class MicVadSegmenter:
         self._raw_sample_rate: int | None = None  # feed()에 들어오는 원본 sr(세션 내내 고정 가정)
 
         self._speech_chunks_raw: list[np.ndarray] = []
+        self._speech_sample_count = 0  # MAX_SPEECH_SECONDS 안전장치용(원본 샘플레이트 기준)
         self._pre_roll_raw: deque[np.ndarray] = deque(maxlen=self.PRE_ROLL_CHUNKS)
         self._in_speech = False
 
@@ -86,6 +94,7 @@ class MicVadSegmenter:
         self._pending16k = np.zeros(0, dtype=np.float32)
         self._pending_raw = np.zeros(0, dtype=np.float32)
         self._speech_chunks_raw = []
+        self._speech_sample_count = 0
         self._pre_roll_raw.clear()
         self._in_speech = False
 
@@ -133,14 +142,35 @@ class MicVadSegmenter:
                 # pre_roll(발화 시작 직전까지의 원본 샘플레이트 구간)을 앞에 붙여서
                 # 감지 지연으로 잘려나갈 뻔한 첫 음절을 복원한다.
                 self._speech_chunks_raw = list(self._pre_roll_raw) + [raw_chunk]
+                self._speech_sample_count = sum(len(c) for c in self._speech_chunks_raw)
             elif self._in_speech:
                 # "end" 신호가 이번 청크에서 나오더라도, 이 청크 자체는 아직
                 # 발화의 일부(문장 끝자락)이므로 먼저 담아둔다.
                 self._speech_chunks_raw.append(raw_chunk)
+                self._speech_sample_count += len(raw_chunk)
             else:
                 # 아직 발화 시작 전(무음/판단 대기) — 나중에 "start"가 뜨면 쓸 수 있게
                 # 최근 청크만 계속 굴려서 들고 있는다.
                 self._pre_roll_raw.append(raw_chunk)
+
+            # 2026-08-24 안전장치(클래스 상단 MAX_SPEECH_SECONDS 주석 참고) — 프레임
+            # 유실로 VAD가 "끝"을 영영 못 찾는 경우, 여기서 강제로 리셋해서 최소한
+            # 다음 발화부터는 다시 반응하게 만든다. reset()을 그대로 쓰지 않는 이유:
+            # reset()은 _pending16k/_pending_raw까지 통째로 비우는데, 그러면 지금 이
+            # feed() 호출로 들어온 오디오 중 아직 이 while 루프가 처리 안 한 나머지
+            # 구간까지 같이 버려진다 — 여기서는 "발화 중" 관련 상태만 정리한다.
+            if self._in_speech and self._speech_sample_count / sample_rate > self.MAX_SPEECH_SECONDS:
+                print(
+                    f"[MIC_VAD] 발화가 {self.MAX_SPEECH_SECONDS}초 넘게 안 끝나 강제 리셋함"
+                    "(프레임 유실 등으로 VAD가 '끝'을 못 잡는 경우 대비)",
+                    flush=True,
+                )
+                self._iterator.reset_states()
+                self._speech_chunks_raw = []
+                self._speech_sample_count = 0
+                self._pre_roll_raw.clear()
+                self._in_speech = False
+                continue
 
             if event is not None and "end" in event:
                 self._in_speech = False
