@@ -109,6 +109,7 @@ def process_utterance(text: str) -> None:
         "excluded": None,
         "result": None,
         "value_error": False,
+        "error": None,
     }
 
     def _compute(job=job) -> None:
@@ -128,11 +129,28 @@ def process_utterance(text: str) -> None:
                 )
             except ValueError:
                 job["value_error"] = True
+        except Exception as exc:  # noqa: BLE001 — EC-05, STT는 성공했는데 그 뒤(원격 LLM
+            # 호출 extract_intent_llm()/DB 조회 handle_utterance())가 실패하면 이전엔 예외가
+            # 이 스레드 안에서 조용히 죽고 job["llm_result"]가 None으로 남아, 메인 스레드가
+            # 곧바로 `llm_result["dish_name"]`에서 TypeError로 화면째 죽었다(2026-08-24 리포트
+            # — "음성 인식은 되는데 다음 화면으로 안 넘어간다", chat_log엔 사용자 발화가
+            # 남아 STT 자체는 성공했음이 확인됨). 다른 원격 호출(voice_io._stt_transcribe 등)과
+            # 같은 수준으로 여기도 감싸서, 실패해도 화면이 죽는 대신 안내만 하고 넘어가게 한다.
+            print(f"[UTTERANCE_DEBUG] extract_intent_llm/handle_utterance 실패: {exc!r}", flush=True)
+            job["error"] = exc
         finally:
             job["done"] = True
 
     threading.Thread(target=_compute, daemon=True).start()
     _drain_mic_while(job)
+
+    if job["error"] is not None:
+        # 위 _compute()의 새 예외 처리와 짝 — 알 수 없는 intent(파일 끝 방어적 분기)와
+        # 똑같이 unclassified로 보내되, 원인이 "잘 처리 못함"이 아니라 "일시적 서버/네트워크
+        # 오류"라 같은 문구를 그대로 재사용한다(사용자 입장에서 구분할 필요 없음, EC-05).
+        speak("죄송해요, 잘 처리하지 못했어요. 다시 한 번 말씀해주시겠어요?", hidden=True)
+        goto("unclassified")
+        return
 
     llm_result = job["llm_result"]
     dish_name_guess = llm_result["dish_name"]
