@@ -337,7 +337,16 @@ def speak(
 
         _arm_tts_mute(audio_path)
         if hidden:
-            render_audio_autoplay(audio_path)
+            # 2026-08-24 리포트 — "같은 안내가 두 번 겹쳐 들린다"(A안) 실측 확인. hidden=True는
+            # 예외 없이 항상 speak() 직후 바로 goto()로 넘어가는 호출부에서만 쓰이고(위
+            # docstring 참고), 도착 화면이 _render_cached_speech()/render_step_card()로 같은
+            # 캐시 파일을 다시 찾아 들려준다 — 원래 설계는 "이 rerun 직전 렌더는 rerun이
+            # 곧장 지워서 실제로는 안 들린다"는 가정이었는데, 마이크 안정화용 백그라운드
+            # 스레드/드레인 루프가 늘면서 타이밍이 달라져 이 렌더도 실제로 재생을 시작해버려
+            # 도착 화면 재생과 겹쳤다. hidden일 땐 합성/캐싱만 하고 재생 자체를 아예 안
+            # 그려서 이 레이스를 원천적으로 없앤다 — 실제로 들려주는 책임은 100% 도착 화면에
+            # 있으므로 동작 변화는 없다.
+            pass
         else:
             render_audio_player(audio_path)
     except Exception as exc:  # noqa: BLE001 — 사용자에게 보여줄 실패이지 숨길 실패가 아님

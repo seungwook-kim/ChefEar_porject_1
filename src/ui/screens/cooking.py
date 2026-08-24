@@ -18,7 +18,7 @@ from theme import (
 )
 from ui.dispatch import COOKING_COMPLETE_MESSAGE, fallback_buttons, is_home_word, process_utterance, reset_to_start
 from ui.recipe_view import _ingredients_to_chips, refresh_recipe_view
-from ui.session import goto
+from ui.session import get_owner_id, goto
 from ui.voice_io import _AUDIO_DIR, _render_cached_speech, listen, mic_is_playing, prefetch_remaining_steps_audio, speak
 
 
@@ -44,7 +44,30 @@ def screen_start() -> None:
     # 된다. render_big_mic()의 큰 원형 아이콘은 그 상태를 보여주는 장식 요소로 남는다.
     text = listen("start", show_mic=False)
     if text:
-        process_utterance(text)
+        # 2026-08-24 요청 — "등록"이라는 단어가 들어있으면 classify_intent()/LLM 판단을
+        # 거치지 않고 바로 신규 레시피 등록 화면으로 보낸다. dispatch.py의 wants_register
+        # 분기(LLM이 "등록하고 싶다"를 확정 인식한 경우)와 같은 이유 — 사용자가 직접
+        # "등록"이라고 말한 건 시스템 짐작이 아니라 확정된 요청이라 register_intro(짐작
+        # 요리명 보여주며 다시 확인하는 화면)는 건너뛰고 register_dish_name(실제 요리명
+        # 입력 1/3 단계)으로 바로 보낸다 — 아직 짐작 요리명이 없으니 pending_dish_name은
+        # 비워서 그 화면이 직접 물어보게 한다.
+        if "등록" in text:
+            st.session_state.pending_dish_name = None
+            get_owner_id()
+            goto("register_dish_name")
+            return
+        # 2026-08-24 요청 — start는 상시 마이크라 주변 잡음이 VAD에 걸려 그대로 STT로
+        # 넘어가는 경우가 있는데, 그 잡음이 의미 없는 문장으로 인식되면 classify_intent()가
+        # "미분류"로 떨어뜨리고 dispatch.process_utterance()가 표준 데이터에 없는 요리
+        # 가능성으로 보고 항상 신규 등록(register_intro) 화면으로 보내버린다(dispatch.py
+        # intent == "미분류" 분기) — "말도 안 했는데 새 메뉴 등록 화면으로 간다"는 리포트로
+        # 이어졌다. 이 화면에서만, 발화가 진짜 요리 요청일 가능성이 있을 때만 넘긴다 —
+        # "레시피"/"만드는" 중 하나가 들어있어야 통과(요청자 명시 지정). 트레이드오프:
+        # "된장찌개"처럼 이 두 단어 없이 요리명만 말한 정상 발화도 같이 걸러진다 — 잡음
+        # 오탐이 더 잦은 문제라 판단해 감수. 안 걸리면 조용히 무시(다음 rerun까지 계속 듣기만
+        # 함, chat_log에도 안 남음).
+        if "레시피" in text or "만드는" in text:
+            process_utterance(text)
 
     # 2026-08-21: 위쪽에만 render_spacer()가 있고 아래쪽엔 없어서, block-container의
     # flex:1 남는 공간이 전부 위에만 쌓여 콘텐츠가 화면 아래쪽으로 밀렸다 - 뷰포트가
