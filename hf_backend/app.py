@@ -122,5 +122,51 @@ with gr.Blocks(title="ChefEar 추론 백엔드 (내부용 API)") as demo:
         llm_out = gr.JSON(label="결과")
         gr.Button("실행").click(_api_generate_json, llm_in, llm_out, api_name="generate_json")
 
+def _warm_up_models() -> None:
+    """STT/LLM/TTS 모델을 Gradio 서버가 요청을 받기 시작하기 *전에* 미리 로드해둔다.
+
+    2026-08-24 프론트/백엔드 분리 이전엔 이 워밍업이 src/app.py::_warm_up_models()로
+    Streamlit 화면이 뜰 때 실행됐는데, 분리 이후 그 함수는 HF_BACKEND_SPACE가 설정돼
+    있으면(=지금 이 배포 구조) 곧장 반환하도록 바뀌었다("여기서 워밍업할 게 없다") —
+    실제 모델 로딩은 이제 이 Space(hf_backend)가 전담하는데 여기엔 그 워밍업이 아예
+    없어서, 리포트("모델 다운 엄청 오래함") 그대로 **첫 실제 API 요청이 로딩/다운로드
+    비용을 통째로 떠안는** 구조였다. src/app.py의 원래 로직(모델별 개별 try/except —
+    하나가 실패해도 나머지는 계속 쓸 수 있게, EC-05와 같은 정신)을 그대로 옮기되, 여긴
+    Streamlit이 아니라서 st.spinner/st.warning 대신 print()로 진행 상황을 남긴다(HF
+    Space 빌드/시작 로그에서 그대로 보임).
+
+    load_ct2_model()/load_llm()/load_tts_model() 셋 다 전역 캐시(각 모듈의 `_model`류
+    전역 변수)라서 여기서 한 번 불러두면, 그 뒤 _api_stt_transcribe() 등이 실제로
+    호출될 때는 이미 로드된 모델을 즉시 재사용한다(비용 없음) — src/app.py 문서의
+    설명과 동일.
+    """
+    print("[WARMUP] STT 모델 준비 중...", flush=True)
+    try:
+        from stt.infer import load_ct2_model
+
+        load_ct2_model()
+    except Exception as exc:  # noqa: BLE001 — 하나 실패해도 나머지 워밍업/서버 시작은 계속
+        print(f"[WARMUP] STT 모델 준비 실패(첫 실제 요청 때 다시 시도됨): {exc!r}", flush=True)
+
+    print("[WARMUP] LLM(EXAONE) 모델 준비 중...", flush=True)
+    try:
+        from llm.infer import load_llm
+
+        load_llm()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARMUP] LLM 모델 준비 실패(첫 실제 요청 때 다시 시도됨): {exc!r}", flush=True)
+
+    print("[WARMUP] TTS(Qwen3-TTS) 모델 준비 중...", flush=True)
+    try:
+        from tts.infer import load_tts_model
+
+        load_tts_model()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARMUP] TTS 모델 준비 실패(첫 실제 요청 때 다시 시도됨): {exc!r}", flush=True)
+
+    print("[WARMUP] 완료", flush=True)
+
+
 if __name__ == "__main__":
+    _warm_up_models()
     demo.queue().launch()
