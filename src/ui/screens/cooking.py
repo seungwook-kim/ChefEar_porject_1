@@ -37,23 +37,27 @@ def screen_start() -> None:
         '<p style="color:var(--text-faint); font-size:13.5px;">예: "된장찌개 어떻게 만들어?"</p></div>',
         unsafe_allow_html=True,
     )
-    render_big_mic()
+    # 2026-08-24 요청 — 상시 마이크(WebRTC)가 기본/주력 입력 방식이어야 한다는 확인을
+    # 받았다. 처음엔 이 아래 접힌 expander 안에 "실험적" 옵션으로 숨겨놨었는데(같은 날
+    # 초안), 그러면 화면엔 여전히 구식 클릭-녹음 버튼(render_big_mic())만 먼저 보여서
+    # "왜 WebRTC가 아니라 눌러서 말하기냐"는 지적을 받았다 — 순서를 뒤집어 이 화면이
+    # 뜨자마자 바로 보이게 한다(펼침 상태 없이, expander로도 안 감쌈).
+    st.caption("🎙️ 마이크를 켜두면 계속 듣고 있다가, 말이 끝나면 자동으로 인식해요.")
+    listen_realtime("start", process_utterance)
+
+    # 구식 클릭-녹음(render_big_mic()) 방식은 마이크 권한이 막혔거나 WebRTC 연결이 안 되는
+    # 환경을 위한 대체 경로로 접어서 남겨둔다(EC-04) — 완전히 없애지 않음. render_big_mic()의
+    # 반환값(녹음된 오디오)은 원래 코드에서도 그냥 버려지고 있었다(별개의 기존 이슈, 이번
+    # 작업 범위 아님 — 건드리지 않고 그대로 옮기기만 함).
+    with st.expander("또는 눌러서 녹음하기", expanded=False):
+        render_big_mic()
 
     # register_intro/register_dish_name과 같은 이유로(2026-08-21) listen()이 따로 그리는
-    # "말씀해주세요" 녹음 위젯은 꺼둔다 - 이 화면엔 이미 render_big_mic()이 그리는 원형
-    # 마이크 아이콘 + "마이크 켜기" 버튼으로 여는 자체 녹음 위젯이 있어서, 같은 화면에
-    # 마이크 녹음 위젯이 두 벌 겹쳐 보이는 문제가 있었다. 텍스트 입력 대체 경로는 그대로
-    # 남아있고, 실제 음성 녹음은 render_big_mic() 쪽 위젯으로 여전히 가능하다.
+    # "말씀해주세요" 녹음 위젯은 꺼둔다(위 두 마이크 방식과 중복) — 텍스트 입력 대체
+    # 경로(EC-04)만 여기서 항상 보이게 남긴다.
     text = listen("start", show_mic=False)
     if text:
         process_utterance(text)
-
-    # 2026-08-24 요청 — "실시간 마이크가 되는가"가 최우선 확인 항목이라, 클릭-녹음-전송
-    # 방식(render_big_mic()/listen())과 별개로 상시 마이크(WebRTC) 옵션을 여기 추가한다.
-    # 접어둔 상태로 시작해서 기존 화면 UX(원형 마이크 버튼)를 가리지 않게 한다.
-    with st.expander("🎙️ 상시 마이크로 말하기 (실시간, 실험적)", expanded=False):
-        st.caption("켜두면 계속 듣고 있다가, 말이 끝나면 자동으로 인식해요.")
-        listen_realtime("start", process_utterance)
 
     # 2026-08-21: 위쪽에만 render_spacer()가 있고 아래쪽엔 없어서, block-container의
     # flex:1 남는 공간이 전부 위에만 쌓여 콘텐츠가 화면 아래쪽으로 밀렸다 - 뷰포트가
