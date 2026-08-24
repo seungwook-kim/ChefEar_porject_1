@@ -188,14 +188,25 @@ def process_utterance(text: str) -> None:
     intent = result.get("intent")
 
     if intent == "미분류":
-        # 문장 패턴 분류(classify_intent)가 "조회"로 못 알아들은 경우 전부 여기로 온다 —
-        # "분홍코끼리 어떻게 만들어?"처럼 LLM이 요리명을 뽑아낸 경우뿐 아니라, "111"처럼
-        # LLM조차 요리명으로 확신 못 해 dish_name_guess가 None인 경우도 포함한다.
-        # "잘 이해하지 못했어요"로 되묻고 끝내는 대신, 표준 데이터에 없는 요리일
-        # 가능성으로 보고 항상 등록 유도 화면으로 보낸다(2026-08-21 요청) — 등록
-        # 화면 자체가 "이 이름 맞아요?"로 다시 확인/수정을 받으므로, 여기서 추측이
-        # 틀려도 안전하다. LLM이 아무것도 못 뽑았으면 발화 원문을 그대로 짐작값으로 쓴다.
-        st.session_state.pending_dish_name = dish_name_guess or text.strip()
+        # 문장 패턴 분류(classify_intent)가 기준예문 어디에도 못 붙인 경우 전부 여기로
+        # 온다 — "분홍코끼리 어떻게 만들어?"처럼 LLM이 요리명을 뽑아낸 경우뿐 아니라,
+        # "111"처럼 LLM조차 요리명으로 확신 못 해 dish_name_guess가 None인 경우도 포함.
+        #
+        # 2026-08-21 결정(원래 동작): "잘 이해하지 못했어요"로 되묻고 끝내는 대신, 표준
+        # 데이터에 없는 요리일 가능성으로 보고 dish_name_guess가 None이어도 발화 원문을
+        # 그대로 짐작값 삼아 항상 등록 유도 화면으로 보냈다.
+        #
+        # 2026-08-24 리포트로 뒤집음: screen_start()의 잡음 필터(레시피/만들/만드/방법/
+        # 조리/요리/시작 중 하나는 걸러냄, 위 screens/cooking.py 참고)를 통과했더라도
+        # STT 자체가 깨져서 나온 잡음("버그 너무 빠른데" 등 실측 사례)이면 LLM도
+        # dish_name_guess를 못 뽑아 None을 준다 — 이 경우까지 원문을 등록 화면에
+        # "짐작한 이름"으로 들이밀면 자꾸 등록 화면으로 튀는 문제가 계속됐다. LLM이
+        # 요리명 비슷한 것도 하나 못 찾았으면(dish_name_guess가 None) 등록 화면 대신
+        # 그냥 무시하고 계속 듣는다 — LLM이 뭐라도 뽑아낸 경우(기준예문엔 없지만 진짜
+        # 요리명으로 보이는 경우)만 기존대로 등록 유도로 보낸다.
+        if not dish_name_guess:
+            return
+        st.session_state.pending_dish_name = dish_name_guess
         goto("register_intro")
         return
 

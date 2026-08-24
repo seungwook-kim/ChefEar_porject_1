@@ -211,7 +211,9 @@ def _render_cached_speech(message: str, *, nonce: int | str = 0) -> None:
         render_audio_autoplay(path, nonce=nonce)
 
 
-def _drain_mic_while(job: dict, *, loading_message: str | None = "다음으로 넘어가고 있어요...") -> None:
+def _drain_mic_while(
+    job: dict, *, loading_message: str | None = "다음으로 넘어가고 있어요...", timeout_s: float = 45.0
+) -> None:
     """job["done"]가 True가 될 때까지 상시 마이크(webrtc)의 오디오 큐를 계속 비워준다.
 
     2026-08-23 리포트 실측 확인 — "된장찌개 레시피 알려줘"로 recipe_confirm까지는
@@ -240,6 +242,21 @@ def _drain_mic_while(job: dict, *, loading_message: str | None = "다음으로 �
     st.empty()로 자리를 직접 잡아두고, 대기가 끝나는 즉시(다음 코드로 넘어가기 *전에*)
     명시적으로 비워서 — 다음 rerun의 DOM 정리에 기대지 않고 이 함수 안에서 스스로
     정리를 끝낸다.
+
+    2026-08-24 추가 리포트 — 그런데도 "음성 나오고 로딩바가 안 사라진다"는 재현 확인.
+    원인: 이 while 루프는 job["done"]이 True가 될 때까지 무조건 기다리는데, job을
+    채우는 배경 스레드(process_utterance()의 _compute()/speak()의 _run_synthesis())가
+    원격 HF 백엔드 호출(STT/TTS/LLM)에서 되돌아오지 않고 그냥 멈춰버리면(오늘 실측된
+    ReadTimeout류 — 응답이 아예 안 오는 경우 gradio_client가 기다리는 시간이 김)
+    job["done"]이 영영 True가 안 되고, 그러면 이 함수도 영원히 못 빠져나가서
+    overlay_slot.empty()에 도달할 방법이 없다 — 로딩바가 화면에 그대로 박제된다.
+    timeout_s(기본 45초 — TTS 3~9초/LLM+DB 몇 초 정상 범위보다 훨씬 여유 있게 잡아서
+    정상적으로 느린 케이스를 오탐하지 않게 함)를 넘기면 포기하고 빠져나간다 — 이때
+    job["error"]를 직접 채워준다(아직 비어있을 때만)는 게 핵심: speak()/
+    process_utterance() 둘 다 이미 "job["error"]가 있으면 실패로 처리"하는 경로를
+    갖고 있어서(EC-05), 이 함수만 고치면 호출부를 하나도 안 건드리고도 그 경로를
+    그대로 재사용해 안전하게 실패 처리된다. 배경 스레드 자체는 daemon=True라 계속
+    돌게 두고(늦게 끝나도 아무도 그 결과를 안 봄, _run_mic_loop()의 같은 패턴).
     """
     import queue
     import time
@@ -249,7 +266,22 @@ def _drain_mic_while(job: dict, *, loading_message: str | None = "다음으로 �
         with overlay_slot:
             render_loading_overlay(loading_message)
 
+    started = time.monotonic()
     while not job["done"]:
+        if time.monotonic() - started > timeout_s:
+            print(
+                f"[DRAIN_TIMEOUT] {timeout_s}초 넘게 안 끝나 포기함 — 로딩바가 영원히 "
+                "안 사라지는 문제 방지용 안전장치 발동",
+                flush=True,
+            )
+            # dict.setdefault()는 키가 "없을 때만" 채우는데, 두 호출부(speak()/
+            # process_utterance()) 모두 job을 만들 때 "error": None으로 키 자체는
+            # 이미 넣어둔다 — setdefault로는 절대 안 덮어써져서 명시적으로 None인지
+            # 확인해야 한다.
+            if job.get("error") is None:
+                job["error"] = TimeoutError(f"{timeout_s}초 안에 응답이 없었어요")
+            job["done"] = True
+            break
         context = st.session_state.get(_mic_component_key())
         receiver = getattr(context, "audio_receiver", None) if context is not None else None
         if receiver is None:
