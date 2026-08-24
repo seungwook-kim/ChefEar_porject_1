@@ -588,7 +588,13 @@ def _run_mic_loop() -> str | None:
         webrtc_ctx = webrtc_streamer(
             key=_mic_component_key(),
             mode=WebRtcMode.SENDONLY,
-            audio_receiver_size=256,
+            # 2026-08-24 — 배포 로그에서 "Queue overflow" 경고 반복 확인(256개 = 20ms 프레임
+            # 기준 약 5초어치, 그 이상 소비 쪽이 못 따라가면 넘치는 프레임이 그냥 버려짐 —
+            # STT 인식 품질 저하로 이어질 수 있음). 근본 원인(rerun 사이 소비 공백, 특히
+            # WEBRTC_DEBUG=1일 때 로깅 오버헤드 자체가 크게 기여)은 따로 해결해야 하지만,
+            # 경고 메시지가 직접 제안하는 대로 큐 크기를 늘려 일시적인 지연에 더 버틸 여유를
+            # 준다(버려지는 시점을 늦출 뿐 근본 해결은 아님).
+            audio_receiver_size=1024,
             # 2026-08-23 — noiseSuppression/autoGainControl을 껐던 시도는 되돌림. 실측
             # 로그로 확인해보니 autoGainControl을 끄는 순간 캡처 레벨 자체가 확 낮아졌다
             # (rms 0.07대 -> 0.013대, 약 1/5) — 이 마이크/방 환경은 원래 입력 자체가 작아서
