@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import logging
 import os
 import threading
 from pathlib import Path
@@ -51,8 +52,6 @@ load_env()
 # check)가 왜 실패하는지 콘솔에 찍는다. 원인 확인되면 지울 것(상시로 켜두면 로그가
 # 너무 많아짐).
 if os.environ.get("WEBRTC_DEBUG"):
-    import logging
-
     logging.basicConfig(level=logging.DEBUG)
     logging.getLogger("aioice").setLevel(logging.DEBUG)
     logging.getLogger("aiortc").setLevel(logging.DEBUG)
@@ -64,6 +63,32 @@ if os.environ.get("WEBRTC_DEBUG"):
     # 그 로거만 다시 올려서 조용히 시키고 나머지 aiortc/aioice 로그(연결 상태 변화,
     # ICE 후보 등)는 그대로 DEBUG로 유지한다.
     logging.getLogger("aiortc.rtcrtpreceiver").setLevel(logging.WARNING)
+
+# 2026-08-24 추가 — 배포 로그에서 계속 반복 확인된 무해한 2차 예외를 조용히 시킨다
+# (WEBRTC_DEBUG 여부와 무관하게 항상 적용 — 실사용 프로덕션 로그에서 나온 문제라서).
+#
+# aioice가 ICE 연결을 위해 보낸 STUN 패킷의 재전송 타이머(stun.py의 `__retry`,
+# asyncio loop.call_later로 예약됨)가, 그 UDP 트랜스포트가 이미 닫혀 정리까지 끝난
+# *뒤에* 취소되지 않은 채로 뒤늦게 발사되면서 생긴다. asyncio가 연결 종료 시
+# 참조 순환을 끊으려고 transport._sock/_loop를 전부 None으로 비워두는데, 그 상태에서
+# 재전송이 `transport.sendto()`를 부르면 내부적으로 예외가 나고, 그 예외를 보고하려는
+# `_fatal_error()`가 `self._loop.call_exception_handler(...)`를 부르다가 `_loop`마저
+# None이라 AttributeError로 한 번 더 넘어진다 — 이 2차 AttributeError가 콜백을 소유한
+# (아직 살아있는) 이벤트 루프의 기본 예외 핸들러까지 올라가 "Exception in callback ..."
+# 로그로 찍힌다.
+#
+# TURN 서버 유무와 무관하게(정상적으로 연결이 끊기는 모든 순간 — 사용자가 화면을
+# 벗어나거나 _recover_dead_mic()가 세대를 새로 만들며 이전 연결을 닫을 때도) 생길 수
+# 있는 asyncio/aioice 내부 레이스라 우리 코드로 원인 자체를 없앨 수는 없고, 마이크
+# 재연결 등 실제 동작에도 영향이 없는 로그 전용 잡음이라 이 특정 시그니처만 걸러낸다.
+class _SuppressStaleStunRetryError(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        exc = record.exc_info[1] if record.exc_info else None
+        is_stale_stun_retry = isinstance(exc, AttributeError) and "call_exception_handler" in str(exc)
+        return not is_stale_stun_retry
+
+
+logging.getLogger("asyncio").addFilter(_SuppressStaleStunRetryError())
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -78,6 +103,19 @@ def _ice_servers() -> list[dict]:
     나가기만 하면 되므로 이런 이중 NAT에서도 거의 항상 통한다 — 이 데스크탑에 coturn을
     직접 띄우고 그 값을 .env에 채워두면 자동으로 쓰인다. 값이 없으면 조용히 STUN만
     쓰는 것으로 폴백한다(같은 기기 브라우저에서 테스트할 땐 STUN만으로도 충분함).
+
+    2026-08-24 추가 — Streamlit Cloud 배포에 TURN(UDP)까지 넣었는데도 마이크 표시등이
+    전혀 안 켜지는 리포트로, TURN 후보에 TCP·443 변형(`?transport=tcp`)을 하나 더
+    추가했다. streamlit-webrtc/aiortc는 이 프로세스(Streamlit Cloud 서버) 자신이
+    RTCPeerConnection의 한쪽 당사자라서(단순 시그널링 중계가 아니라 오디오가 실제로
+    이 파이썬 프로세스까지 들어옴, `_run_mic_loop()`가 `audio_receiver.get_frames()`로
+    직접 받는 구조) STUN도 TURN도 전부 이 서버 프로세스가 직접 UDP로 내보내야 하는데,
+    공유형 클라우드 컨테이너는 흔히 아웃바운드 UDP를 막고 TCP(특히 443)만 열어둔다 —
+    그러면 TURN을 UDP로 넣어도 서버 쪽에서부터 못 나가서 똑같이 막힌다. TCP·443으로
+    감싼 TURN 후보는 일반 HTTPS 트래픽처럼 보여서 그런 제약을 우회할 확률이 높다.
+    Open Relay Project가 공식으로 이 조합(`turn:host:443?transport=tcp`)을 제공해서
+    그대로 따랐다 — TURN_HOST/USERNAME/PASSWORD가 다른 TURN 제공자로 바뀌어도 대부분
+    같은 443/tcp 엔드포인트를 지원한다.
     """
     servers: list[dict] = [{"urls": ["stun:stun.l.google.com:19302"]}]
 
@@ -88,7 +126,10 @@ def _ice_servers() -> list[dict]:
         turn_port = os.environ.get("TURN_PORT") or "3478"
         servers.append(
             {
-                "urls": [f"turn:{turn_host}:{turn_port}"],
+                "urls": [
+                    f"turn:{turn_host}:{turn_port}",
+                    f"turn:{turn_host}:443?transport=tcp",
+                ],
                 "username": turn_username,
                 "credential": turn_password,
             }
