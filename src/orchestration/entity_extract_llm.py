@@ -100,6 +100,16 @@ def extract_intent_llm(utterance: str) -> dict:
 
     dish_name = result.get("dish_name")
     dish_name = dish_name.strip() if isinstance(dish_name, str) and dish_name.strip() else None
+    # 2026-08-24 추가 — 프롬프트가 "요리명이 없거나 불확실하면 null"이라고 명시해도
+    # 작은 로컬 모델(EXAONE-2.4B)이 이 규칙을 100% 지키진 않는다. 실측 사례:
+    # "하지말까?"(STT가 잡음/무관한 발화를 인식한 것) 같은 문장/질문 조각을 그대로
+    # dish_name으로 돌려줘서, 미분류로 걸러져야 할 잡음이 dish_name_guess가 채워진
+    # 것처럼 취급돼 등록 유도 화면(register_intro)으로 계속 새는 문제로 이어졌다
+    # (dispatch.py의 "dish_name_guess가 있으면 통과" 게이트를 그대로 통과해버림).
+    # 물음표/느낌표가 섞여 있으면 그 자체로 "이건 요리명이 아니라 문장/질문 조각"이라는
+    # 강한 신호다(진짜 요리명이 "?"/"!"를 포함할 일은 없음) — 이 경우 null로 되돌린다.
+    if dish_name and ("?" in dish_name or "!" in dish_name):
+        dish_name = None
     return {"dish_name": dish_name, "wants_register": result.get("wants_register") is True}
 
 
