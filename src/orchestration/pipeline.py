@@ -149,6 +149,22 @@ def handle_utterance(
     intent = result["intent"]
 
     if intent == "미분류":
+        # 2026-08-24 추가 — classify_intent()의 기준예문 커버리지가 부족해서 진짜
+        # 조회 의도인데도("OOO 레시피 좀 알려줘"류 흔치 않은 어미) "미분류"로
+        # 떨어지는 사례 실측(리포트: "특정 단어를 제외한 문장들이 계속 표준 레시피에
+        # 없는 요리라고 나온다"). 여기서 바로 포기하기 전에, 호출부(LLM 추출값)가
+        # 넘겨준 dish_name이 있으면 "조회" 분기와 똑같이 DB 조회를 한 번 더 시도한다 —
+        # classify_intent()는 "무슨 의도인지"만 보고 dish_name의 DB 존재 여부는 전혀
+        # 모르므로, 표현이 애매해서 "미분류"로 떨어졌더라도 그 요리가 실제로 표준
+        # DB에 있으면 조회로 취급해 그대로 진행한다. 정말 DB에 없는 요리면(select_
+        # standard_recipe가 None) 기존대로 미분류로 남는다(register_intro행, 정상).
+        if dish_name:
+            found = select_standard_recipe(dish_name, owner_id=session.get("owner_id"), client=client)
+            if found is not None:
+                session["current_recipe_id"] = found["recipe_id"]
+                session["step_number"] = 1
+                session["previous_recipe_id"] = None
+                return {"intent": "조회", **found}
         return {"intent": intent, "message": result["fallback_message"]}
 
     if intent in _DIRECTION_BY_INTENT:
