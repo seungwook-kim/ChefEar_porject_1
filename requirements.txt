@@ -35,6 +35,10 @@ av==17.1.0
 # 빌드를 받는다(사이즈는 sentence-transformers가 이미 받는 torch와 비슷한 수준) — VAD
 # 모델 자체는 아주 작아서(~1MB) 추론 자체는 CPU로도 빠르다.
 silero-vad==6.2.1
+# ui/mic_vad.py의 MicVadSegmenter._resample()이 librosa.resample()을 쓴다 — 실제 배포
+# 로그로 ModuleNotFoundError 확인됨(2026-08-24). requirements-main.txt와 같은 버전으로
+# 고정(numba/scipy 등도 딸려오지만 전부 cp314 휠 있음, 2026-08-24 PyPI 확인).
+librosa==0.11.0
 
 # --- HF Spaces 유료 GPU 백엔드 호출 클라이언트 ---
 gradio_client==2.6.0
